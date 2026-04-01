@@ -1,5 +1,5 @@
-# Private local rules (template is tracked, edits are not)
-# Run after first clone: git update-index --assume-unchanged private/private.md
+# Private local rules (not tracked)
+private/private.md
 
 # Simulation outputs
 *.vcd
