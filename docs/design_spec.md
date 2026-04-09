@@ -1,8 +1,9 @@
 # RSA-2048 IP 設計仕様書
 
 **作成日**: 2026年4月8日
+**更新日**: 2026年4月10日
 **作成者**: a2zime × Claude Code
-**バージョン**: 1.0
+**バージョン**: 1.1
 **前提ドキュメント**: [要求仕様書](requirements.md)
 
 ---
@@ -113,6 +114,8 @@ result = MontMul(result, 1, n)          // result * R^(-1) mod n
 
 ## 3. モジュール階層
 
+### 3.1 テキスト階層
+
 ```
 rsa_top                     トップレベル統合
 ├── io_controller           32bit シリアル I/O（Valid/Ready ハンドシェイク）
@@ -123,6 +126,98 @@ rsa_top                     トップレベル統合
 └── operand_mem             デュアルポート BRAM オペランドストレージ
 
 rsa_pkg.sv                  パッケージ（アドレスマップ定数・型定義）
+```
+
+### 3.2 ブロック図
+
+```mermaid
+block-beta
+    columns 5
+
+    block:ext:1
+        columns 1
+        HOST["ホスト\n(CPU等)"]
+    end
+
+    space
+
+    block:rsa_top_block:3
+        columns 3
+
+        io_controller["io_controller\n32bit Serial I/O\nValid/Ready"]
+
+        space
+
+        operand_mem["operand_mem\nDual-Port BRAM\n1024x32bit"]
+
+        space
+
+        crt_controller["crt_controller\nCRT\nOrchestration"]
+
+        space
+
+        space
+
+        block:mod_exp_block:1
+            columns 1
+            mod_exp["mod_exp\nSquare-and-Multiply"]
+            block:mont_block:1
+                columns 1
+                mont_mul["mont_mul\nFIOS Montgomery"]
+                mul_add_unit["mul_add_unit\nDSP48E1 Wrapper"]
+            end
+        end
+
+        space
+    end
+
+    HOST --> io_controller
+    io_controller --> operand_mem
+    crt_controller --> operand_mem
+    crt_controller --> mod_exp
+    mod_exp --> operand_mem
+    mont_mul --> mul_add_unit
+```
+
+### 3.3 信号接続図
+
+```mermaid
+graph TB
+    subgraph "rsa_top"
+        direction TB
+        IO["io_controller"]
+        MEM["operand_mem<br/>Dual-Port BRAM"]
+        CRT["crt_controller"]
+        subgraph "mod_exp"
+            EXP["mod_exp<br/>Square-and-Multiply"]
+            subgraph "mont_mul"
+                MONT["mont_mul<br/>FIOS"]
+                MUL["mul_add_unit<br/>DSP48E1"]
+            end
+        end
+    end
+
+    HOST["ホスト"] -- "valid_i/ready_o<br/>data_i[31:0]<br/>addr_i[3:0]" --> IO
+    IO -- "data_o[31:0]<br/>valid_o/ready_i" --> HOST
+    HOST -- "start_i<br/>mode_i" --> RSA_FSM["rsa_top FSM"]
+    RSA_FSM -- "load_en<br/>unload_en" --> IO
+    RSA_FSM -- "start" --> EXP
+    RSA_FSM -- "start" --> CRT
+
+    IO -- "Port A: we/addr/wdata" --> MEM
+    CRT -- "Port A: we/addr/wdata" --> MEM
+    MONT -- "Port B: re/we/addr" --> MEM
+    EXP -- "start/mode" --> MONT
+    MONT -- "a/b/c/start" --> MUL
+    MUL -- "result[63:0]/done" --> MONT
+    MONT -- "done" --> EXP
+    EXP -- "done" --> RSA_FSM
+    CRT -- "exp_start/mode" --> EXP
+    EXP -- "done" --> CRT
+
+    style MEM fill:#e1f5fe
+    style MUL fill:#fff3e0
+    style RSA_FSM fill:#fff9c4
 ```
 
 ---
@@ -252,17 +347,23 @@ typedef enum logic [2:0] {
 } rsa_top_state_e;
 ```
 
-**状態遷移:**
+**状態遷移図:**
 
+```mermaid
+stateDiagram-v2
+    [*] --> StIdle
+    StIdle --> StLoad : valid_i
+    StLoad --> StIdle : load_done
+    StIdle --> StPubExp : start_i &\nmode=0
+    StIdle --> StCrt : start_i &\nmode=1
+    StPubExp --> StUnload : exp_done
+    StCrt --> StUnload : crt_done
+    StUnload --> StIdle : unload_done
 ```
-StIdle ──[valid_i]──→ StLoad
-StLoad ──[load_done]──→ StIdle（次パラメータ待ち）
-StIdle ──[start_i, mode=0]──→ StPubExp
-StIdle ──[start_i, mode=1]──→ StCrt
-StPubExp ──[exp_done]──→ StUnload
-StCrt ──[crt_done]──→ StUnload
-StUnload ──[unload_done]──→ StIdle
-```
+
+**タイミングチャート:**
+
+![rsa_top タイミングチャート](img/timing_rsa_top.svg)
 
 ---
 
@@ -313,6 +414,17 @@ typedef enum logic [1:0] {
 } io_state_e;
 ```
 
+**状態遷移図:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> StIoIdle
+    StIoIdle --> StIoLoad : load_en_i
+    StIoIdle --> StIoUnload : unload_en_i
+    StIoLoad --> StIoIdle : load_done\n(全ワード転送完了)
+    StIoUnload --> StIoIdle : unload_done\n(全ワード送信完了)
+```
+
 **ワードカウンタ:**
 - 6bit カウンタ（0..63 for 2048bit パラメータ, 0..31 for 1024bit パラメータ）
 - 転送ワード数は addr_i から自動判定
@@ -321,6 +433,10 @@ typedef enum logic [1:0] {
   - 32bit パラメータ（n_prime, np_prime, nq_prime）: 1 ワード
 
 **バイトオーダー:** LSB-first（word[0] = 最下位 32bit）
+
+**タイミングチャート:**
+
+![io_controller タイミングチャート](img/timing_io_controller.svg)
 
 ---
 
@@ -374,21 +490,24 @@ typedef enum logic [3:0] {
 } mod_exp_state_e;
 ```
 
-**状態遷移:**
+**状態遷移図:**
 
-```
-StExpIdle ──[start]──→ StExpToMont
-StExpToMont ──[mont_done]──→ StExpInitR
-StExpInitR ──[mont_done]──→ StExpScan
-StExpScan ──→ StExpSquare
-StExpSquare ──→ StExpSquareWait
-StExpSquareWait ──[mont_done, bit=1]──→ StExpMul
-StExpSquareWait ──[mont_done, bit=0]──→ StExpScan（次ビット）
-StExpMul ──→ StExpMulWait
-StExpMulWait ──[mont_done, 残ビットあり]──→ StExpScan
-StExpMulWait ──[mont_done, 最終ビット]──→ StExpFromMont
-StExpFromMont ──[mont_done]──→ StExpDone
-StExpDone ──→ StExpIdle
+```mermaid
+stateDiagram-v2
+    [*] --> StExpIdle
+    StExpIdle --> StExpToMont : start_i
+    StExpToMont --> StExpInitR : mont_done
+    StExpInitR --> StExpScan : mont_done
+    StExpScan --> StExpSquare
+    StExpSquare --> StExpSquareWait
+    StExpSquareWait --> StExpMul : mont_done &\nbit=1
+    StExpSquareWait --> StExpScan : mont_done &\nbit=0 &\n残ビットあり
+    StExpSquareWait --> StExpFromMont : mont_done &\nbit=0 &\n最終ビット
+    StExpMul --> StExpMulWait
+    StExpMulWait --> StExpScan : mont_done &\n残ビットあり
+    StExpMulWait --> StExpFromMont : mont_done &\n最終ビット
+    StExpFromMont --> StExpDone : mont_done
+    StExpDone --> StExpIdle
 ```
 
 **指数ビット走査:**
@@ -396,6 +515,10 @@ StExpDone ──→ StExpIdle
 - ビットカウンタが現在のビット位置を追跡
 - 該当ワードをメモリから読み出し、該当ビットを抽出
 - MSB（最上位ビット）から走査を開始
+
+**タイミングチャート:**
+
+![mod_exp タイミングチャート](img/timing_mod_exp.svg)
 
 ---
 
@@ -457,6 +580,25 @@ typedef enum logic [3:0] {
 } mont_mul_state_e;
 ```
 
+**状態遷移図:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> StMontIdle
+    StMontIdle --> StMontOuterInit : start_i
+    StMontOuterInit --> StMontInnerFirst : b[i] ロード完了
+    StMontInnerFirst --> StMontComputeM : a[0]*b[i] 完了
+    StMontComputeM --> StMontMN0 : m 計算完了
+    StMontMN0 --> StMontInnerLoop : m*n[0] 完了
+    StMontInnerLoop --> StMontInnerStore : 積和完了
+    StMontInnerStore --> StMontInnerLoop : j < s-1
+    StMontInnerStore --> StMontOuterEnd : j = s-1
+    StMontOuterEnd --> StMontOuterInit : i < s-1
+    StMontOuterEnd --> StMontFinalSub : i = s-1
+    StMontFinalSub --> StMontDone : 減算完了
+    StMontDone --> StMontIdle
+```
+
 **内部ループのサイクル内訳（1 イテレーション j あたり）:**
 1. `a[j]` をメモリから読み出し、`a[j] * b[i]` 乗算開始
 2. `t[j]` と キャリーで蓄積
@@ -464,6 +606,10 @@ typedef enum logic [3:0] {
 4. 蓄積して `t[j-1]` を格納
 
 メモリ読み出しと DSP 演算のパイプライニングにより、内部ループは約 6 サイクル/j。
+
+**タイミングチャート:**
+
+![mont_mul タイミングチャート](img/timing_mont_mul.svg)
 
 ---
 
@@ -513,6 +659,10 @@ result = a_lo * b_lo
 | 4 | a_hi × b_hi + シフト加算 + c 加算 |
 
 レイテンシ: 4 サイクル（DSP パイプライン含む）。
+
+**タイミングチャート:**
+
+![mul_add_unit タイミングチャート](img/timing_mul_add_unit.svg)
 
 ---
 
@@ -577,10 +727,34 @@ typedef enum logic [3:0] {
 } crt_state_e;
 ```
 
+**状態遷移図:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> StCrtIdle
+    StCrtIdle --> StCrtReduceP : start_i
+    StCrtReduceP --> StCrtExpP : base mod p 完了
+    StCrtExpP --> StCrtExpPWait : exp_start
+    StCrtExpPWait --> StCrtReduceQ : exp_done\n(m1 格納)
+    StCrtReduceQ --> StCrtExpQ : base mod q 完了
+    StCrtExpQ --> StCrtExpQWait : exp_start
+    StCrtExpQWait --> StCrtSubM : exp_done\n(m2 格納)
+    StCrtSubM --> StCrtMulQinv : h_temp 計算完了
+    StCrtMulQinv --> StCrtMulQinvWait : mont_start
+    StCrtMulQinvWait --> StCrtMulHQ : mont_done\n(h 格納)
+    StCrtMulHQ --> StCrtAddM2 : h*q 計算完了
+    StCrtAddM2 --> StCrtDone : result 格納完了
+    StCrtDone --> StCrtIdle
+```
+
 **base mod p/q の計算:**
 入力 base（2048bit）に対して base mod p を計算する必要がある。
 base < n = p×q であるため、モンゴメリ乗算器を 1024bit モードで再利用して
 剰余を計算する（`MontMul(base, 1, p)` で R^(-1) 補正後に再変換）。
+
+**タイミングチャート:**
+
+![crt_controller タイミングチャート](img/timing_crt_controller.svg)
 
 ---
 
@@ -622,40 +796,104 @@ module operand_mem #(
 
 ### 6.1 公開鍵演算（mode_i = 0）
 
-```
-ホスト              io_controller    operand_mem    mod_exp      mont_mul
-  │                     │                │             │             │
-  │── data_i ──────────→│                │             │             │
-  │   (64w × 各パラメータ) │── mem_we ─────→│             │             │
-  │                     │  (base,exp,n,  │             │             │
-  │                     │   r_sq,n_prime)│             │             │
-  │── start_i ─────────→│                │             │             │
-  │                     │                │── start ───→│             │
-  │                     │                │  (指数ビット │── start ───→│
-  │                     │                │   走査、     │ (a,b,n を   │
-  │                     │                │   sq/mul     │  メモリから  │
-  │                     │                │   制御)      │  読み出し)  │
-  │                     │                │             │── result ──→│
-  │                     │                │←─ done ─────│             │
-  │                     │←─ unload_en ───│             │             │
-  │←── data_o ─────────│── mem_re ─────→│             │             │
-  │   (64w)             │                │             │             │
+```mermaid
+sequenceDiagram
+    participant H as ホスト
+    participant RSA as rsa_top FSM
+    participant IO as io_controller
+    participant MEM as operand_mem
+    participant EXP as mod_exp
+    participant MONT as mont_mul
+
+    Note over H,MONT: パラメータロードフェーズ
+    H->>IO: data_i (base, 64w)
+    IO->>MEM: mem_we (ADDR_BASE)
+    H->>IO: data_i (exp, 64w)
+    IO->>MEM: mem_we (ADDR_EXP)
+    H->>IO: data_i (n, 64w)
+    IO->>MEM: mem_we (ADDR_MOD)
+    H->>IO: data_i (R^2 mod n, 64w)
+    IO->>MEM: mem_we (ADDR_RSQ)
+    H->>IO: data_i (n_prime, 1w)
+    IO->>RSA: load_done
+
+    Note over H,MONT: 演算フェーズ
+    H->>RSA: start_i (mode=0)
+    RSA->>EXP: start
+    EXP->>MONT: mont_start (base→Montgomery変換)
+    MONT->>MEM: mem_re/we (a, b, n, t)
+    MONT-->>EXP: mont_done
+    loop 指数ビット走査 (MSB→LSB)
+        EXP->>MEM: mem_re (指数ワード読み出し)
+        EXP->>MONT: mont_start (二乗)
+        MONT->>MEM: mem_re/we
+        MONT-->>EXP: mont_done
+        opt exp[i] = 1
+            EXP->>MONT: mont_start (乗算)
+            MONT->>MEM: mem_re/we
+            MONT-->>EXP: mont_done
+        end
+    end
+    EXP->>MONT: mont_start (Montgomery→通常変換)
+    MONT-->>EXP: mont_done
+    EXP-->>RSA: done
+
+    Note over H,MONT: 結果出力フェーズ
+    RSA->>IO: unload_en
+    IO->>MEM: mem_re (ADDR_RESULT)
+    IO->>H: data_o (result, 64w)
+    IO-->>RSA: unload_done
 ```
 
 ### 6.2 秘密鍵演算（CRT, mode_i = 1）
 
-```
-1. io_controller: base, p, q, dp, dq, qinv, R^2_p, R^2_q, np', nq' をロード
-2. crt_controller が制御を取得:
-   a. base mod p を計算 → オペランド領域に格納
-   b. mod_exp を 1024bit モードに設定（base_mod_p, dp, p, R^2_p, np'）
-   c. mod_exp が m1 = base^dp mod p を計算 → m1 を格納
-   d. base mod q を計算 → オペランド領域に格納
-   e. mod_exp を 1024bit モードに設定（base_mod_q, dq, q, R^2_q, nq'）
-   f. mod_exp が m2 = base^dq mod q を計算 → m2 を格納
-   g. h = qinv × (m1 - m2) mod p を mont_mul 1024bit モードで計算
-   h. result = m2 + h×q をマルチワード乗算・加算で計算
-3. io_controller: result（2048bit）をアンロード
+```mermaid
+sequenceDiagram
+    participant H as ホスト
+    participant RSA as rsa_top FSM
+    participant IO as io_controller
+    participant MEM as operand_mem
+    participant CRT as crt_controller
+    participant EXP as mod_exp
+    participant MONT as mont_mul
+
+    Note over H,MONT: パラメータロードフェーズ
+    H->>IO: data_i (base, p, q, dp, dq, qinv, R^2_p, R^2_q, np', nq')
+    IO->>MEM: mem_we (各パラメータ領域)
+    IO-->>RSA: load_done
+
+    Note over H,MONT: CRT演算フェーズ
+    H->>RSA: start_i (mode=1)
+    RSA->>CRT: start
+
+    Note over CRT,MONT: m1 = base^dp mod p
+    CRT->>MEM: base mod p を計算・格納
+    CRT->>EXP: exp_start (1024bit mode)
+    EXP->>MONT: mont_start (反復)
+    MONT->>MEM: mem_re/we
+    MONT-->>EXP: mont_done (反復)
+    EXP-->>CRT: exp_done (m1 格納)
+
+    Note over CRT,MONT: m2 = base^dq mod q
+    CRT->>MEM: base mod q を計算・格納
+    CRT->>EXP: exp_start (1024bit mode)
+    EXP->>MONT: mont_start (反復)
+    MONT->>MEM: mem_re/we
+    MONT-->>EXP: mont_done (反復)
+    EXP-->>CRT: exp_done (m2 格納)
+
+    Note over CRT,MONT: CRT再結合
+    CRT->>MEM: h_temp = m1 - m2 (mod p 補正)
+    CRT->>MONT: mont_start (h = qinv * h_temp mod p)
+    MONT-->>CRT: mont_done
+    CRT->>MEM: result = m2 + h * q
+    CRT-->>RSA: done
+
+    Note over H,MONT: 結果出力フェーズ
+    RSA->>IO: unload_en
+    IO->>MEM: mem_re (ADDR_RESULT)
+    IO->>H: data_o (result, 64w)
+    IO-->>RSA: unload_done
 ```
 
 ---
