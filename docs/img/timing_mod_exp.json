@@ -1,0 +1,26 @@
+{ "signal": [
+  { "name": "clk",           "wave": "p.................." },
+  {},
+  [ "制御",
+    { "name": "start_i",      "wave": "010................" },
+    { "name": "busy_o",       "wave": "0.1...............0" },
+    { "name": "done_o",       "wave": "0.................10" }
+  ],
+  {},
+  [ "状態",
+    { "name": "state_q",      "wave": "3.4.5.6.7.6.7.8.93", "data": ["Idle","ToMont","InitR","Scan","Sq","Scan","Sq/Mul","...","FromMont","Done","Idle"] }
+  ],
+  {},
+  [ "MontMul I/F",
+    { "name": "mont_start_o", "wave": "0..10.10..10...10.." },
+    { "name": "mont_done_i",  "wave": "0...10..10...10..10" }
+  ],
+  {},
+  [ "指数走査",
+    { "name": "exp_bit",      "wave": "x.....3...3...3..x.", "data": ["bit[n-1]","bit[n-2]","..."] },
+    { "name": "exp_word",     "wave": "x.....3.......3..x.", "data": ["word[k]","word[k-1]"] }
+  ]
+],
+  "config": { "hscale": 1.2 },
+  "head": { "text": "mod_exp: Square-and-Multiply シーケンス" }
+}
