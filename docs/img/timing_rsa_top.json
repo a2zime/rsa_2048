@@ -1,26 +1,32 @@
 { "signal": [
-  { "name": "clk",       "wave": "p..................." },
-  { "name": "rst_n",     "wave": "01.................." },
+  { "name": "clk",          "wave": "p......................" },
+  { "name": "rst_n",        "wave": "01....................." },
   {},
   [ "入力",
-    { "name": "valid_i",  "wave": "0.1..0......1..0..." },
-    { "name": "ready_o",  "wave": "0.1..0..........1.." },
-    { "name": "addr_i",   "wave": "x.3..x..........x..", "data": ["ParamBase"] },
-    { "name": "data_i",   "wave": "x.3333x..........x.", "data": ["w0","w1","...","w63"] },
-    { "name": "mode_i",   "wave": "x.3..x.........x...", "data": ["0"] },
-    { "name": "start_i",  "wave": "0.......10........." }
+    { "name": "valid_i",     "wave": "0..1.1.1.1.1.0....1.1.0", "data": [] },
+    { "name": "ready_o",     "wave": "0.1...................0" },
+    { "name": "addr_i",      "wave": "x..3.3.3.3.3.x........x", "data": ["Base","Base","Base","...","Base"] },
+    { "name": "data_i",      "wave": "x..3.3.3.3.3.x........x", "data": ["w0","w1","w2","...","w63"] },
+    { "name": "mode_i",      "wave": "x..3.........x........x", "data": ["0"] },
+    { "name": "start_i",     "wave": "0.............10......." }
+  ],
+  {},
+  [ "内部",
+    { "name": "word_cnt",    "wave": "x..3.3.3.3.3.x........x", "data": ["0","1","2","..","63"] },
+    { "name": "load_done",   "wave": "0...........10........." }
   ],
   {},
   [ "状態",
-    { "name": "state_q",  "wave": "3....4...5......6.3", "data": ["StIdle","StLoad","StPubExp","StUnload","StIdle"] }
+    { "name": "state_q",     "wave": "3..4.........3.5......6", "data": ["StIdle","StLoad","StIdle","StPubExp","StUnload"] }
   ],
   {},
   [ "出力",
-    { "name": "busy_o",   "wave": "0........1......0.." },
-    { "name": "valid_o",  "wave": "0...............1.0" },
-    { "name": "data_o",   "wave": "x...............3.x", "data": ["result"] }
+    { "name": "busy_o",      "wave": "0..............1......0" },
+    { "name": "valid_o",     "wave": "0.....................1" },
+    { "name": "data_o",      "wave": "x.....................3", "data": ["result"] }
   ]
 ],
   "config": { "hscale": 1.2 },
-  "head": { "text": "rsa_top: 公開鍵演算シーケンス" }
+  "head": { "text": "rsa_top: 公開鍵演算シーケンス (1パラメータロード例)" },
+  "foot": { "text": "ready_o はリセット解除直後に FF からアサートされ、valid_i の組み合わせ関数ではない。load_done は word_cnt=63 の転送完了クロックでパルス状にアサートされる。" }
 }

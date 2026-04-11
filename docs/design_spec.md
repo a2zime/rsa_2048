@@ -130,53 +130,59 @@ rsa_pkg.sv                  パッケージ（アドレスマップ定数・型�
 
 ### 3.2 ブロック図
 
+上位モジュール `rsa_top` の境界を外枠で表す。本IPのスコープ外である
+AXI-Lite ラッパーおよびホストとの関係も点線で明示する。
+
 ```mermaid
-block-beta
-    columns 5
+flowchart TB
+    HOST["ホスト (CPU等)"]
 
-    block:ext:1
-        columns 1
-        HOST["ホスト\n(CPU等)"]
+    subgraph AXIWRAP["AXI-Lite Wrapper (本IPスコープ外)"]
+        direction TB
+        AXI["AXI-Lite I/F"]
     end
 
-    space
+    subgraph RSATOP["rsa_top (本IP)"]
+        direction TB
+        FSM["rsa_top FSM<br/>(全体制御)"]
+        IO["io_controller<br/>32bit Serial I/O<br/>Valid/Ready"]
+        CRT["crt_controller<br/>CRT Orchestration"]
+        MEM["operand_mem<br/>Dual-Port BRAM<br/>1024x32bit"]
 
-    block:rsa_top_block:3
-        columns 3
-
-        io_controller["io_controller\n32bit Serial I/O\nValid/Ready"]
-
-        space
-
-        operand_mem["operand_mem\nDual-Port BRAM\n1024x32bit"]
-
-        space
-
-        crt_controller["crt_controller\nCRT\nOrchestration"]
-
-        space
-
-        space
-
-        block:mod_exp_block:1
-            columns 1
-            mod_exp["mod_exp\nSquare-and-Multiply"]
-            block:mont_block:1
-                columns 1
-                mont_mul["mont_mul\nFIOS Montgomery"]
-                mul_add_unit["mul_add_unit\nDSP48E1 Wrapper"]
+        subgraph MODEXP["mod_exp (モジュラー累乗)"]
+            direction TB
+            EXP["Square-and-Multiply<br/>制御FSM"]
+            subgraph MONTMUL["mont_mul (モンゴメリ乗算)"]
+                direction TB
+                MONT["FIOS 制御FSM"]
+                MUL["mul_add_unit<br/>(DSP48E1 Wrapper)"]
+                MONT --> MUL
+                MUL --> MONT
             end
+            EXP --> MONT
+            MONT --> EXP
         end
-
-        space
     end
 
-    HOST --> io_controller
-    io_controller --> operand_mem
-    crt_controller --> operand_mem
-    crt_controller --> mod_exp
-    mod_exp --> operand_mem
-    mont_mul --> mul_add_unit
+    HOST -.->|"将来拡張"| AXI
+    AXI -.->|"32bit Serial"| IO
+    HOST ==>|"Valid/Ready<br/>32bit Serial"| IO
+
+    FSM --> IO
+    FSM --> CRT
+    FSM --> EXP
+    IO <--> MEM
+    CRT <--> MEM
+    CRT --> EXP
+    EXP --> FSM
+    MONT <--> MEM
+
+    style RSATOP fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style AXIWRAP fill:#f5f5f5,stroke:#999,stroke-dasharray: 5 5
+    style MODEXP fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style MONTMUL fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    style MEM fill:#e1f5fe,stroke:#0277bd
+    style FSM fill:#fce4ec,stroke:#c2185b
 ```
 
 ### 3.3 信号接続図
@@ -351,19 +357,51 @@ typedef enum logic [2:0] {
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> StIdle
-    StIdle --> StLoad : valid_i
-    StLoad --> StIdle : load_done
-    StIdle --> StPubExp : start_i &\nmode=0
-    StIdle --> StCrt : start_i &\nmode=1
-    StPubExp --> StUnload : exp_done
-    StCrt --> StUnload : crt_done
-    StUnload --> StIdle : unload_done
+    StIdle --> StLoad : T1
+    StLoad --> StLoad : T2
+    StLoad --> StIdle : T3
+    StIdle --> StPubExp : T4
+    StIdle --> StCrt : T5
+    StPubExp --> StUnload : T6
+    StCrt --> StUnload : T7
+    StUnload --> StIdle : T8
 ```
+
+**遷移条件:**
+
+| ID | 遷移 | 条件 |
+|---|---|---|
+| T1 | StIdle → StLoad | `valid_i & ready_o`（ハンドシェイク成立）|
+| T2 | StLoad → StLoad | `word_cnt < N-1 & valid_i & ready_o`（カウンタ進行） |
+| T3 | StLoad → StIdle | `word_cnt = N-1 & valid_i & ready_o`（load_done パルス） |
+| T4 | StIdle → StPubExp | `start_i & (mode_i = 0)` |
+| T5 | StIdle → StCrt | `start_i & (mode_i = 1)` |
+| T6 | StPubExp → StUnload | `exp_done` |
+| T7 | StCrt → StUnload | `crt_done` |
+| T8 | StUnload → StIdle | `word_cnt = N-1 & valid_o & ready_i`（unload_done パルス） |
+
+**補足:**
+- `N` はパラメータのワード数（2048bit=64、1024bit=32、32bit=1）であり、
+  `addr_i` から自動決定される。
+- `word_cnt` は io_controller 内のワードカウンタ。
+- 複数パラメータの連続ロード時は、1パラメータ分のロード完了ごとに
+  StLoad→StIdle に戻り、次の valid_i を待つ。
 
 **タイミングチャート:**
 
 ![rsa_top タイミングチャート](img/timing_rsa_top.svg)
+
+**タイミングチャートの補足:**
+- `ready_o` は FF 出力であり、`valid_i` の組み合わせ関数ではない。
+  リセット解除後、StIdle で空き状態となった時点でアサートされる
+  （=ロード受付可能）。valid_i が到着しても 1 クロック以内に
+  ready_o が即応する必要はない（ただし実装上は即応可能）。
+- `load_done_o` は io_controller の内部カウンタが最終ワード
+  （例: 64ワードパラメータなら `word_cnt == 63 & valid_i & ready_o`）に
+  達した次のクロックでアサートされ、rsa_top FSM が StLoad→StIdle 遷移を
+  検知するトリガとなる（1クロックのパルス）。
 
 ---
 
@@ -418,12 +456,28 @@ typedef enum logic [1:0] {
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> StIoIdle
     StIoIdle --> StIoLoad : load_en_i
+    StIoLoad --> StIoLoad : word_cnt < N-1
+    StIoLoad --> StIoIdle : load_done
     StIoIdle --> StIoUnload : unload_en_i
-    StIoLoad --> StIoIdle : load_done\n(全ワード転送完了)
-    StIoUnload --> StIoIdle : unload_done\n(全ワード送信完了)
+    StIoUnload --> StIoUnload : word_cnt < N-1
+    StIoUnload --> StIoIdle : unload_done
 ```
+
+**遷移条件の詳細:**
+
+| 遷移 | 条件 |
+|---|---|
+| StIoIdle → StIoLoad | `load_en_i` アサート |
+| StIoLoad セルフループ | `word_cnt < N-1 & valid_i & ready_o`（カウンタ進行） |
+| StIoLoad → StIoIdle | `word_cnt = N-1 & valid_i & ready_o`（load_done パルス） |
+| StIoIdle → StIoUnload | `unload_en_i` アサート |
+| StIoUnload セルフループ | `word_cnt < N-1 & valid_o & ready_i`（カウンタ進行） |
+| StIoUnload → StIoIdle | `word_cnt = N-1 & valid_o & ready_i`（unload_done パルス） |
+
+`N` は転送ワード数（64 or 32 or 1）で、`addr_i` から決定される。
 
 **ワードカウンタ:**
 - 6bit カウンタ（0..63 for 2048bit パラメータ, 0..31 for 1024bit パラメータ）
