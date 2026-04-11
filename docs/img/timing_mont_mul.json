@@ -1,31 +1,114 @@
-{ "signal": [
-  { "name": "clk",           "wave": "p....................." },
-  {},
-  [ "制御",
-    { "name": "start_i",      "wave": "010..................." },
-    { "name": "busy_o",       "wave": "0.1..................0" },
-    { "name": "done_o",       "wave": "0...................10" }
+{
+  "signal": [
+    {
+      "name": "clk",
+      "wave": "p........................................"
+    },
+    {},
+    [
+      "制御",
+      {
+        "name": "start_i",
+        "wave": "010|...|...|...|...|...|...|...|...|...|."
+      },
+      {
+        "name": "busy_o",
+        "wave": "0..|1..|...|...|...|...|...|...|...|...|0"
+      },
+      {
+        "name": "done_o",
+        "wave": "0..|...|...|...|...|...|...|...|...|10.|."
+      }
+    ],
+    {},
+    [
+      "状態",
+      {
+        "name": "state_q",
+        "wave": "=..|=..|=..|=..|=..|=..|=..|=..|=..|=..|=",
+        "data": [
+          "Idle",
+          "OutInit",
+          "InFirst",
+          "CompM",
+          "MN0",
+          "InLoop",
+          "InStore",
+          "OutEnd",
+          "FinSub",
+          "Done",
+          "Idle"
+        ]
+      }
+    ],
+    {},
+    [
+      "メモリ I/F",
+      {
+        "name": "mem_re_o",
+        "wave": "0..|0..|1..|0..|1..|1..|0..|0..|0..|0..|0"
+      },
+      {
+        "name": "mem_addr_o",
+        "wave": "x..|x..|=..|x..|=..|=..|x..|x..|x..|x..|x",
+        "data": [
+          "a[0]",
+          "n[0]",
+          "a[j]"
+        ]
+      },
+      {
+        "name": "mem_we_o",
+        "wave": "0..|0..|0..|0..|0..|0..|1..|0..|0..|0..|0"
+      },
+      {
+        "name": "mem_wdata_o",
+        "wave": "x..|x..|x..|x..|x..|x..|=..|x..|x..|x..|x",
+        "data": [
+          "t[j-1]"
+        ]
+      }
+    ],
+    {},
+    [
+      "DSP I/F",
+      {
+        "name": "mul_start_o",
+        "wave": "0..|0..|10.|10.|10.|10.|0..|0..|0..|0..|0"
+      },
+      {
+        "name": "mul_a_o",
+        "wave": "x..|x..|=..|=..|=..|=..|x..|x..|x..|x..|x",
+        "data": [
+          "a[0]",
+          "t[0]",
+          "m",
+          "a[j]"
+        ]
+      },
+      {
+        "name": "mul_b_o",
+        "wave": "x..|x..|=..|=..|=..|=..|x..|x..|x..|x..|x",
+        "data": [
+          "b[i]",
+          "n'[0]",
+          "n[0]",
+          "b[i]"
+        ]
+      },
+      {
+        "name": "mul_done_i",
+        "wave": "0..|0..|..1|0.1|0.1|0.1|0..|0..|0..|0..|0"
+      }
+    ]
   ],
-  {},
-  [ "状態",
-    { "name": "state_q",      "wave": "=.=.=.=.=.=..=.=.=.=.=", "data": ["Idle","OutInit","InFirst","CompM","MN0","InLoop","InStore","OutEnd","FinSub","Done","Idle"] }
-  ],
-  {},
-  [ "メモリ I/F",
-    { "name": "mem_re_o",     "wave": "0..1..0.1..1..0......." },
-    { "name": "mem_addr_o",   "wave": "x..=..x.=..=..x.......", "data": ["a[0]","a[j]","n[j]"] },
-    { "name": "mem_we_o",     "wave": "0.........0.1..0......" },
-    { "name": "mem_wdata_o",  "wave": "x...........=..x......", "data": ["t[j-1]"] }
-  ],
-  {},
-  [ "DSP I/F",
-    { "name": "mul_start_o",  "wave": "0...10..10.10........." },
-    { "name": "mul_a_o",      "wave": "x...=...=..=..x.......", "data": ["a[0]","a[j]","m"] },
-    { "name": "mul_b_o",      "wave": "x...=...=..=..x.......", "data": ["b[i]","b[i]","n[j]"] },
-    { "name": "mul_done_i",   "wave": "0....10..10.10........" }
-  ]
-],
-  "config": { "hscale": 1.1 },
-  "head": { "text": "mont_mul: FIOS 内部ループシーケンス" },
-  "foot": { "text": "Idle→OutInit→InFirst→CompM→MN0→InLoop→InStore→OutEnd→FinSub→Done→Idle と遷移。done_o は Done 状態最終クロックで 1 クロックパルス。" }
+  "config": {
+    "hscale": 0.9
+  },
+  "head": {
+    "text": "mont_mul: FIOS 内部ループシーケンス（gap line により各状態の経過時間を表現）"
+  },
+  "foot": {
+    "text": "gap line (|) は各状態が複数サイクル要することを表す。InLoop は j インデックスに対する代表的な 1 反復を示す。"
+  }
 }

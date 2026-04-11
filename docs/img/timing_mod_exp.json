@@ -1,26 +1,78 @@
-{ "signal": [
-  { "name": "clk",           "wave": "p....................." },
-  {},
-  [ "制御",
-    { "name": "start_i",      "wave": "010..................." },
-    { "name": "busy_o",       "wave": "0.1..................0" },
-    { "name": "done_o",       "wave": "0...................10" }
+{
+  "signal": [
+    {
+      "name": "clk",
+      "wave": "p........................................"
+    },
+    {},
+    [
+      "制御",
+      {
+        "name": "start_i",
+        "wave": "010|...|...|...|...|...|...|...|...|...|."
+      },
+      {
+        "name": "busy_o",
+        "wave": "0..|1..|...|...|...|...|...|...|...|...|0"
+      },
+      {
+        "name": "done_o",
+        "wave": "0..|...|...|...|...|...|...|...|...|10.|."
+      }
+    ],
+    {},
+    [
+      "状態",
+      {
+        "name": "state_q",
+        "wave": "=..|=..|=..|=..|=..|=..|=..|=..|=..|=..|=",
+        "data": [
+          "Idle",
+          "ToMont",
+          "InitR",
+          "Scan",
+          "Sq",
+          "Mul",
+          "Scan",
+          "Sq",
+          "FromMont",
+          "Done",
+          "Idle"
+        ]
+      }
+    ],
+    {},
+    [
+      "MontMul I/F",
+      {
+        "name": "mont_start_o",
+        "wave": "0..|10.|0..|...|10.|10.|0..|10.|10.|0..|."
+      },
+      {
+        "name": "mont_done_i",
+        "wave": "0..|..1|0..|...|..1|0.1|0..|..1|0.1|0..|."
+      }
+    ],
+    {},
+    [
+      "指数走査",
+      {
+        "name": "exp_bit",
+        "wave": "x..|x..|x..|=..|...|...|=..|...|x..|x..|x",
+        "data": [
+          "bit[n-1]",
+          "bit[n-2]"
+        ]
+      }
+    ]
   ],
-  {},
-  [ "状態",
-    { "name": "state_q",      "wave": "=.=.=.=.=.=.=.=.=.=..=", "data": ["Idle","ToMont","InitR","Scan","Sq","Mul","Scan","Sq","FromMont","Done","Idle"] }
-  ],
-  {},
-  [ "MontMul I/F",
-    { "name": "mont_start_o", "wave": "0...10.10..10.10......" },
-    { "name": "mont_done_i",  "wave": "0....10.10..10.10....." }
-  ],
-  {},
-  [ "指数走査",
-    { "name": "exp_bit",      "wave": "x.....=...=...=....x..", "data": ["bit[n-1]","bit[n-2]","..."] }
-  ]
-],
-  "config": { "hscale": 1.1 },
-  "head": { "text": "mod_exp: Square-and-Multiply シーケンス" },
-  "foot": { "text": "Done 状態で done_o を 1 クロックパルスとしてアサートし Idle に復帰。" }
+  "config": {
+    "hscale": 0.9
+  },
+  "head": {
+    "text": "mod_exp: Square-and-Multiply シーケンス（gap line により各状態の経過時間を表現）"
+  },
+  "foot": {
+    "text": "gap line (|) は各状態が複数サイクル要することを表す。Done 状態で done_o を 1 クロックパルスとしてアサートし Idle に復帰。"
+  }
 }
