@@ -189,23 +189,26 @@ flowchart TB
 
 ```mermaid
 graph TB
-    subgraph "rsa_top"
+    HOST["ホスト"]
+
+    subgraph RSATOP["rsa_top"]
         direction TB
+        RSA_FSM["rsa_top FSM"]
         IO["io_controller"]
         MEM["operand_mem<br/>Dual-Port BRAM"]
         CRT["crt_controller"]
-        subgraph "mod_exp"
+        subgraph MODEXP["mod_exp"]
             EXP["mod_exp<br/>Square-and-Multiply"]
-            subgraph "mont_mul"
+            subgraph MONTMUL["mont_mul"]
                 MONT["mont_mul<br/>FIOS"]
                 MUL["mul_add_unit<br/>DSP48E1"]
             end
         end
     end
 
-    HOST["ホスト"] -- "valid_i/ready_o<br/>data_i[31:0]<br/>addr_i[3:0]" --> IO
+    HOST -- "valid_i/ready_o<br/>data_i[31:0]<br/>addr_i[3:0]" --> IO
     IO -- "data_o[31:0]<br/>valid_o/ready_i" --> HOST
-    HOST -- "start_i<br/>mode_i" --> RSA_FSM["rsa_top FSM"]
+    HOST -- "start_i<br/>mode_i" --> RSA_FSM
     RSA_FSM -- "load_en<br/>unload_en" --> IO
     RSA_FSM -- "start" --> EXP
     RSA_FSM -- "start" --> CRT
@@ -221,6 +224,7 @@ graph TB
     CRT -- "exp_start/mode" --> EXP
     EXP -- "done" --> CRT
 
+    style RSATOP fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
     style MEM fill:#e1f5fe
     style MUL fill:#fff3e0
     style RSA_FSM fill:#fff9c4
@@ -373,14 +377,14 @@ stateDiagram-v2
 
 | ID | 遷移 | 条件 |
 |---|---|---|
-| T1 | StIdle → StLoad | `valid_i & ready_o`（ハンドシェイク成立）|
-| T2 | StLoad → StLoad | `word_cnt < N-1 & valid_i & ready_o`（カウンタ進行） |
-| T3 | StLoad → StIdle | `word_cnt = N-1 & valid_i & ready_o`（load_done パルス） |
-| T4 | StIdle → StPubExp | `start_i & (mode_i = 0)` |
-| T5 | StIdle → StCrt | `start_i & (mode_i = 1)` |
+| T1 | StIdle → StLoad | `(valid_i & ready_o)`（ハンドシェイク成立）|
+| T2 | StLoad → StLoad | `(word_cnt < N-1) & (valid_i & ready_o)`（カウンタ進行） |
+| T3 | StLoad → StIdle | `(word_cnt == N-1) & (valid_i & ready_o)`（load_done パルス） |
+| T4 | StIdle → StPubExp | `start_i & (mode_i == 0)` |
+| T5 | StIdle → StCrt | `start_i & (mode_i == 1)` |
 | T6 | StPubExp → StUnload | `exp_done` |
 | T7 | StCrt → StUnload | `crt_done` |
-| T8 | StUnload → StIdle | `word_cnt = N-1 & valid_o & ready_i`（unload_done パルス） |
+| T8 | StUnload → StIdle | `(word_cnt == N-1) & (valid_o & ready_i)`（unload_done パルス） |
 
 **補足:**
 - `N` はパラメータのワード数（2048bit=64、1024bit=32、32bit=1）であり、
@@ -402,7 +406,7 @@ stateDiagram-v2
   （=ロード受付可能）。valid_i が到着しても 1 クロック以内に
   ready_o が即応する必要はない（ただし実装上は即応可能）。
 - `load_done_o` は io_controller の内部カウンタが最終ワード
-  （例: 64ワードパラメータなら `word_cnt == 63 & valid_i & ready_o`）に
+  （例: 64ワードパラメータなら `(word_cnt == 63) & (valid_i & ready_o)`）に
   達した次のクロックでアサートされ、rsa_top FSM が StLoad→StIdle 遷移を
   検知するトリガとなる（1クロックのパルス）。
 
@@ -474,11 +478,11 @@ stateDiagram-v2
 | 遷移 | 条件 |
 |---|---|
 | StIoIdle → StIoLoad | `load_en_i` アサート |
-| StIoLoad セルフループ | `word_cnt < N-1 & valid_i & ready_o`（カウンタ進行） |
-| StIoLoad → StIoIdle | `word_cnt = N-1 & valid_i & ready_o`（load_done パルス） |
+| StIoLoad セルフループ | `(word_cnt < N-1) & (valid_i & ready_o)`（カウンタ進行） |
+| StIoLoad → StIoIdle | `(word_cnt == N-1) & (valid_i & ready_o)`（load_done パルス） |
 | StIoIdle → StIoUnload | `unload_en_i` アサート |
-| StIoUnload セルフループ | `word_cnt < N-1 & valid_o & ready_i`（カウンタ進行） |
-| StIoUnload → StIoIdle | `word_cnt = N-1 & valid_o & ready_i`（unload_done パルス） |
+| StIoUnload セルフループ | `(word_cnt < N-1) & (valid_o & ready_i)`（カウンタ進行） |
+| StIoUnload → StIoIdle | `(word_cnt == N-1) & (valid_o & ready_i)`（unload_done パルス） |
 
 `N` は転送ワード数（64 or 32 or 1）で、`addr_i` から決定される。
 
@@ -714,7 +718,7 @@ stateDiagram-v2
 3. `n[j]` をメモリから読み出し、`m * n[j]` 乗算開始
 4. 蓄積して `t[j-1]` を格納
 
-メモリ読み出しと DSP 演算のパイプライニングにより、内部ループは約 6 サイクル/j。
+メモリ読み出しと DSP 演算のパイプライニングにより、内部ループは約 6 サイクル。
 
 **タイミングチャート:**
 
@@ -844,13 +848,13 @@ stateDiagram-v2
     StCrtIdle --> StCrtReduceP : start_i
     StCrtReduceP --> StCrtExpP : base mod p 完了
     StCrtExpP --> StCrtExpPWait : exp_start
-    StCrtExpPWait --> StCrtReduceQ : exp_done\n(m1 格納)
+    StCrtExpPWait --> StCrtReduceQ : exp_done (m1 格納)
     StCrtReduceQ --> StCrtExpQ : base mod q 完了
     StCrtExpQ --> StCrtExpQWait : exp_start
-    StCrtExpQWait --> StCrtSubM : exp_done\n(m2 格納)
+    StCrtExpQWait --> StCrtSubM : exp_done (m2 格納)
     StCrtSubM --> StCrtMulQinv : h_temp 計算完了
     StCrtMulQinv --> StCrtMulQinvWait : mont_start
-    StCrtMulQinvWait --> StCrtMulHQ : mont_done\n(h 格納)
+    StCrtMulQinvWait --> StCrtMulHQ : mont_done (h 格納)
     StCrtMulHQ --> StCrtAddM2 : h*q 計算完了
     StCrtAddM2 --> StCrtDone : result 格納完了
     StCrtDone --> StCrtIdle
