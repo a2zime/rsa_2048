@@ -8,7 +8,7 @@
   ],
   {},
   [ "状態",
-    { "name": "state_q",      "wave": "3.4.5.6.7.a.6.7.8.9..3", "data": ["Idle","ToMont","InitR","Scan","Sq","Mul","Scan","Sq","FromMont","Done","Idle"] }
+    { "name": "state_q",      "wave": "=.=.=.=.=.=.=.=.=.=..=", "data": ["Idle","ToMont","InitR","Scan","Sq","Mul","Scan","Sq","FromMont","Done","Idle"] }
   ],
   {},
   [ "MontMul I/F",
@@ -17,7 +17,7 @@
   ],
   {},
   [ "指数走査",
-    { "name": "exp_bit",      "wave": "x.....3...3...3....x..", "data": ["bit[n-1]","bit[n-2]","..."] }
+    { "name": "exp_bit",      "wave": "x.....=...=...=....x..", "data": ["bit[n-1]","bit[n-2]","..."] }
   ]
 ],
   "config": { "hscale": 1.1 },
