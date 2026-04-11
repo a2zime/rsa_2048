@@ -1,23 +1,36 @@
 { "signal": [
-  { "name": "clk",            "wave": "p........................" },
+  { "name": "clk",            "wave": "p.............................." },
   {},
   [ "制御",
-    { "name": "start_i",       "wave": "010......................" },
-    { "name": "busy_o",        "wave": "0.1.....................0" },
-    { "name": "done_o",        "wave": "0......................10" }
+    { "name": "start_i",       "wave": "010..........................." },
+    { "name": "busy_o",        "wave": "0.1..........................0." },
+    { "name": "done_o",        "wave": "0............................10" }
   ],
   {},
   [ "状態",
-    { "name": "state_q",       "wave": "=.=.=.....=.=.....==.====", "data": ["Idle","RedP","ExpP","RedQ","ExpQ","SubM","MulQinv","MulHQ","AddM2","Done","Idle"] }
+    { "name": "state_q",       "wave": "=.==.=..=.=..=.=..=.=.=.=.=.===", "data": ["Idle","RedP","ExpP","ExpPWait","RedQ","ExpQ","ExpQWait","SubM","MulQinv","MulQinvWait","MulHQ","AddM2","Done","Idle"] }
+  ],
+  {},
+  [ "メモリ I/F (Port A)",
+    { "name": "mem_re_o",      "wave": "0.1.0........1.0..1.0.0.1.0.1.0" },
+    { "name": "mem_we_o",      "wave": "0..10.........10...10..10..10.0" },
+    { "name": "mem_addr_o",    "wave": "x.=.=x.......=.=x.=.=.=.=.=.=.x", "data": ["base[]","t[]","base[]","t[]","m1[]","m2[]","qinv[]","h[]","h[]","q[]","m2[]","result[]"] }
   ],
   {},
   [ "mod_exp I/F",
-    { "name": "exp_start_o",   "wave": "0...10......10..........." },
-    { "name": "exp_crt_mode_o","wave": "0.1...............0......" },
-    { "name": "exp_done_i",    "wave": "0........10......10......" }
+    { "name": "exp_start_o",   "wave": "0...10...10...........10......." },
+    { "name": "exp_crt_mode_o","wave": "0...1...............0.........." },
+    { "name": "exp_done_i",    "wave": "0.....10...10..........10......" }
+  ],
+  {},
+  [ "DSP (mul_add_unit) I/F",
+    { "name": "mul_start_o",   "wave": "0.10.........10...........10..." },
+    { "name": "mul_a_o",       "wave": "x.=.x........=.x..........=.x..", "data": ["base_hi","m1_q","h[i]"] },
+    { "name": "mul_b_o",       "wave": "x.=.x........=.x..........=.x..", "data": ["p_hi","1","q[j]"] },
+    { "name": "mul_done_i",    "wave": "0..10.........10...........10.." }
   ]
 ],
-  "config": { "hscale": 1.1 },
-  "head": { "text": "crt_controller: CRT秘密鍵演算シーケンス" },
-  "foot": { "text": "Idle→RedP→ExpP→RedQ→ExpQ→SubM→MulQinv→MulHQ→AddM2→Done→Idle と遷移し Idle に復帰。" }
+  "config": { "hscale": 1.0 },
+  "head": { "text": "crt_controller: CRT秘密鍵演算シーケンス（他モジュール通信を含む）" },
+  "foot": { "text": "RedP/RedQ: mem 経由で base 読出、mul_add_unit で base mod p/q を計算。ExpP/ExpQ: mod_exp に start 発行、exp_done_i 待ち。SubM: mem 経由で m1-m2 差分計算（DSP 不要）。MulQinv: mod_exp 経由で qinv×(m1-m2) mod p。MulHQ: mul_add_unit 直接駆動で h×q の 1024×1024→2048bit 乗算。AddM2: mem 経由で result=m2+h*q 累算。最終 Idle に復帰。" }
 }
