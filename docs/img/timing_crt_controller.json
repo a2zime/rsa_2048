@@ -8,15 +8,16 @@
   ],
   {},
   [ "状態",
-    { "name": "state_q",       "wave": "3.4.5.6..7.8.9..a.b.c.d3", "data": ["Idle","RedP","ExpP","Wait","RedQ","ExpQ","Wait","SubM","MulQinv","MulHQ","AddM2","Done","Idle"] }
+    { "name": "state_q",       "wave": "=.=.=.....=.=.....==.====", "data": ["Idle","RedP","ExpP","RedQ","ExpQ","SubM","MulQinv","MulHQ","AddM2","Done","Idle"] }
   ],
   {},
   [ "mod_exp I/F",
-    { "name": "exp_start_o",   "wave": "0..10....10.........." },
-    { "name": "exp_crt_mode_o","wave": "0..1..........0......" },
-    { "name": "exp_done_i",    "wave": "0.....10....10......." }
+    { "name": "exp_start_o",   "wave": "0...10......10..........." },
+    { "name": "exp_crt_mode_o","wave": "0.1...............0......" },
+    { "name": "exp_done_i",    "wave": "0........10......10......" }
   ]
 ],
-  "config": { "hscale": 1.0 },
-  "head": { "text": "crt_controller: CRT秘密鍵演算シーケンス" }
+  "config": { "hscale": 1.1 },
+  "head": { "text": "crt_controller: CRT秘密鍵演算シーケンス" },
+  "foot": { "text": "Idle→RedP→ExpP→RedQ→ExpQ→SubM→MulQinv→MulHQ→AddM2→Done→Idle と遷移し Idle に復帰。" }
 }
