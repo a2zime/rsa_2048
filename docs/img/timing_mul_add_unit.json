@@ -1,0 +1,22 @@
+{ "signal": [
+  { "name": "clk",        "wave": "p........" },
+  {},
+  [ "入力",
+    { "name": "start_i",   "wave": "010......" },
+    { "name": "a_i",       "wave": "x3x......", "data": ["a"] },
+    { "name": "b_i",       "wave": "x3x......", "data": ["b"] },
+    { "name": "c_i",       "wave": "x3x......", "data": ["c"] }
+  ],
+  {},
+  [ "内部演算",
+    { "name": "cycle",     "wave": "x.3333x..", "data": ["aL*bL","aL*bH","aH*bL","aH*bH"] }
+  ],
+  {},
+  [ "出力",
+    { "name": "done_o",    "wave": "0.....10." },
+    { "name": "result_o",  "wave": "x.....3x.", "data": ["a*b+c"] }
+  ]
+],
+  "config": { "hscale": 1.5 },
+  "head": { "text": "mul_add_unit: 32x32 積和演算（4サイクル）" }
+}
