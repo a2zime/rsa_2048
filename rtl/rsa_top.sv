@@ -111,6 +111,8 @@ module rsa_top #(
   logic        crt_exp_start, crt_exp_crt_mode;
   logic        crt_mul_start;
   logic [WordWidth-1:0] crt_mul_a, crt_mul_b, crt_mul_c;
+  logic        crt_mont_start, crt_mont_mode;
+  logic        crt_use_nq_prime;
 
   // mul_add_unit
   logic [WordWidth-1:0] dsp_a, dsp_b, dsp_c;
@@ -197,9 +199,12 @@ module rsa_top #(
 
   always_comb begin
     if (state_q == StCrt) begin
-      // In CRT mode, switch between np_prime / nq_prime based on crt_controller state.
-      // Simplified: switch using crt_exp_crt_mode.
-      active_n_prime = np_prime_q;  // default
+      // In CRT mode, switch between np_prime / nq_prime based on crt_controller phase
+      if (crt_use_nq_prime) begin
+        active_n_prime = nq_prime_q;
+      end else begin
+        active_n_prime = np_prime_q;
+      end
     end else begin
       active_n_prime = n_prime_q;
     end
@@ -316,14 +321,20 @@ module rsa_top #(
     .mont_busy_i   (mont_busy)
   );
 
+  // mont_mul start arbitration: mod_exp or crt_controller (mutually exclusive)
+  logic mont_start_arb;
+  logic mont_mode_arb;
+  assign mont_start_arb = exp_mont_start || crt_mont_start;
+  assign mont_mode_arb  = (state_q == StCrt && !exp_busy) ? crt_mont_mode : exp_mont_mode;
+
   mont_mul #(
     .MaxWords  (KeyWidth / WordWidth),
     .WordWidth (WordWidth)
   ) u_mont_mul (
     .clk_i         (clk_i),
     .rst_ni        (rst_ni),
-    .start_i       (exp_mont_start),
-    .half_mode_i   (exp_mont_mode),
+    .start_i       (mont_start_arb),
+    .half_mode_i   (mont_mode_arb),
     .done_o        (mont_done),
     .busy_o        (mont_busy),
     .mem_re_o      (mont_mem_re),
@@ -344,26 +355,31 @@ module rsa_top #(
     .KeyWidth  (KeyWidth),
     .WordWidth (WordWidth)
   ) u_crt_controller (
-    .clk_i          (clk_i),
-    .rst_ni         (rst_ni),
-    .start_i        ((state_q == StCrt) && !crt_busy && !crt_done),
-    .done_o         (crt_done),
-    .busy_o         (crt_busy),
-    .exp_start_o    (crt_exp_start),
-    .exp_crt_mode_o (crt_exp_crt_mode),
-    .exp_done_i     (exp_done),
-    .exp_busy_i     (exp_busy),
-    .mem_we_o       (crt_mem_we),
-    .mem_re_o       (crt_mem_re),
-    .mem_addr_o     (crt_mem_addr),
-    .mem_wdata_o    (crt_mem_wdata),
-    .mem_rdata_i    (mem_a_rdata),
-    .mul_start_o    (crt_mul_start),
-    .mul_a_o        (crt_mul_a),
-    .mul_b_o        (crt_mul_b),
-    .mul_c_o        (crt_mul_c),
-    .mul_result_i   (dsp_result),
-    .mul_done_i     (dsp_done)
+    .clk_i           (clk_i),
+    .rst_ni          (rst_ni),
+    .start_i         ((state_q == StCrt) && !crt_busy && !crt_done),
+    .done_o          (crt_done),
+    .busy_o          (crt_busy),
+    .exp_start_o     (crt_exp_start),
+    .exp_crt_mode_o  (crt_exp_crt_mode),
+    .exp_done_i      (exp_done),
+    .exp_busy_i      (exp_busy),
+    .mont_start_o    (crt_mont_start),
+    .mont_mode_o     (crt_mont_mode),
+    .mont_done_i     (mont_done),
+    .mont_busy_i     (mont_busy),
+    .use_nq_prime_o  (crt_use_nq_prime),
+    .mem_we_o        (crt_mem_we),
+    .mem_re_o        (crt_mem_re),
+    .mem_addr_o      (crt_mem_addr),
+    .mem_wdata_o     (crt_mem_wdata),
+    .mem_rdata_i     (mem_a_rdata),
+    .mul_start_o     (crt_mul_start),
+    .mul_a_o         (crt_mul_a),
+    .mul_b_o         (crt_mul_b),
+    .mul_c_o         (crt_mul_c),
+    .mul_result_i    (dsp_result),
+    .mul_done_i      (dsp_done)
   );
 
   mul_add_unit #(

@@ -68,6 +68,32 @@
 
 **結果: 全 8 ファイル PASS（違反 0 件）**
 
+### 第 3 回実行（設計仕様整合修正後）
+
+**実施日**: 2026-04-15
+**対象コミット**: （修正中、コミット前に実施）
+**変更ファイル**: rsa_pkg.sv, io_controller.sv, crt_controller.sv, rsa_top.sv
+
+| 変更内容 | 対象ファイル |
+|---|---|
+| ADDR_BASE_P/Q, ParamBasP/Q 追加 | rsa_pkg.sv |
+| 新パラメータ対応 | io_controller.sv |
+| 全面修正: StCrtMulQinv 直接 MontMul, StCrtMulHQ schoolbook 乗算, StCrtSubM 補正, n_prime 切替 | crt_controller.sv |
+| mont_mul 調停, n_prime 切替, crt 新ポート接続 | rsa_top.sv |
+
+| ファイル | 結果 | 違反数 |
+|---|---|---|
+| rsa_pkg.sv | **PASS** | 0 |
+| mul_add_unit.sv | **PASS** | 0 |
+| operand_mem.sv | **PASS** | 0 |
+| mont_mul.sv | **PASS** | 0 |
+| mod_exp.sv | **PASS** | 0 |
+| io_controller.sv | **PASS** | 0 |
+| crt_controller.sv | **PASS** | 0 |
+| rsa_top.sv | **PASS** | 0 |
+
+**結果: 全 8 ファイル PASS（違反 0 件）**
+
 ---
 
 ## 3. 有効ルール一覧（default + 追加）

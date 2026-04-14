@@ -25,6 +25,8 @@ package rsa_pkg;
   localparam int unsigned ADDR_M1       = 10'h2A0;  // CRT intermediate: m1        32w
   localparam int unsigned ADDR_M2       = 10'h2C0;  // CRT intermediate: m2        32w
   localparam int unsigned ADDR_HQ       = 10'h2E0;  // CRT intermediate: h*q       64w
+  localparam int unsigned ADDR_BASE_P   = 10'h320;  // CRT: base mod p             32w
+  localparam int unsigned ADDR_BASE_Q   = 10'h340;  // CRT: base mod q             32w
 
   // Parameter address encoding (addr_i[3:0])
   typedef enum logic [3:0] {
@@ -41,7 +43,9 @@ package rsa_pkg;
     ParamRSqP   = 4'hA,
     ParamRSqQ   = 4'hB,
     ParamNpP    = 4'hC,
-    ParamNqP    = 4'hD
+    ParamNqP    = 4'hD,
+    ParamBasP   = 4'hE,
+    ParamBasQ   = 4'hF
   } param_addr_e;
 
 endpackage
