@@ -2,7 +2,7 @@
 
 **実施日**: 2026-04-14
 **対象ブランチ**: `feature/rtl-coding`（ベース: `f49b2b8` develop HEAD）
-**対象コミット**: 未コミット（RTL 初期実装 — コミット前の最終 Lint 確認）
+**対象コミット**: `df2af33` feat: RSA-2048 IP full RTL initial implementation
 **ツール**: verible-verilog-lint v0.0-3946-g851d3ff4 (2025-02-17)
 **ルールファイル**: `.rules.verible_lint` (MD5: `9f84382c61b9bc8baa2bc6cd71dd8045`)
 
