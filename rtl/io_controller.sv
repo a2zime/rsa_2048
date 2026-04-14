@@ -66,6 +66,8 @@ module io_controller #(
       ParamRSqQ:   param_base_addr = ADDR_RSQ_Q[9:0];
       ParamNpP:    param_base_addr = 10'h000;  // Register-held
       ParamNqP:    param_base_addr = 10'h000;  // Register-held
+      ParamBasP:   param_base_addr = ADDR_BASE_P[9:0];
+      ParamBasQ:   param_base_addr = ADDR_BASE_Q[9:0];
       default:     param_base_addr = 10'h000;
     endcase
   end
@@ -87,6 +89,8 @@ module io_controller #(
       ParamRSqQ:   num_xfer_words = 7'd32;
       ParamNpP:    num_xfer_words = 7'd1;
       ParamNqP:    num_xfer_words = 7'd1;
+      ParamBasP:   num_xfer_words = 7'd32;
+      ParamBasQ:   num_xfer_words = 7'd32;
       default:     num_xfer_words = 7'd1;
     endcase
   end
