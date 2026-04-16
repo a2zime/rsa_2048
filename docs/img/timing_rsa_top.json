@@ -1,34 +1,35 @@
 { "signal": [
-  { "name": "clk",          "wave": "p............................" },
-  { "name": "rst_n",        "wave": "01..........................." },
+  { "name": "clk",          "wave": "p.....|...|....|.." },
+  { "name": "rst_ni",       "wave": "01....|...|....|.." },
   {},
-  [ "Input",
-    { "name": "valid_i",     "wave": "0..1.1.|.1.0................." },
-    { "name": "ready_o",     "wave": "0.1....................|....." },
-    { "name": "addr_i",      "wave": "x..=...|...x.................", "data": ["n (ID)"] },
-    { "name": "data_i",      "wave": "x..=.=.|.=.x.................", "data": ["w0","w1","w63"] },
-    { "name": "mode_i",      "wave": "x..=...|...x.................", "data": ["0"] },
-    { "name": "start_i",     "wave": "0..........10................" }
+  ["Input",
+    { "name": "valid_i",     "wave": "0..1..|.0.|....|.." },
+    { "name": "ready_o",     "wave": "01....|...|0...|.1" },
+    { "name": "addr_i",      "wave": "x..=..|.x.|....|..", "data": ["n"] },
+    { "name": "data_i",      "wave": "x...==|=x.|....|..", "data": ["w0","w1","w63"] },
+    { "name": "mode_i",      "wave": "x.....|..=|x...|..", "data": ["0"] },
+    { "name": "start_i",     "wave": "0.....|..1|0...|.." }
   ],
   {},
-  [ "Internal",
-    { "name": "word_cnt",    "wave": "x..=.=.|.=.x.........|..=.|.=.x", "data": ["0","1","63","0","63"] },
-    { "name": "load_done",   "wave": "0........10.................." },
-    { "name": "exp_done",    "wave": "0..............|.10.........." },
-    { "name": "unload_done", "wave": "0....................|....10." }
+  ["Internal",
+    { "name": "word_cnt",    "wave": "x...==|=x.|..==|=x", "data": ["0","1","63","0","1","63"] },
+    { "name": "load_done",   "wave": "0.....|10.|....|.." },
+    { "name": "exp_done",    "wave": "0.....|...|10..|.." },
+    { "name": "unload_done", "wave": "0.....|...|....|10" }
   ],
   {},
-  [ "State",
-    { "name": "state_q",     "wave": "=..=...|....=.=....|..=..|..=", "data": ["StIdle","StLoad","StIdle","StPubExp","StUnload","StIdle"] }
+  ["State",
+    { "name": "state_q",     "wave": "=...=.|.=.|==..|.=", "data": ["StIdle","StLoad","StIdle","StPubExp","StUnload","StIdle"] }
   ],
   {},
-  [ "Output",
-    { "name": "busy_o",      "wave": "0............1....|........0" },
-    { "name": "valid_o",     "wave": "0....................|..1.|.0" },
-    { "name": "data_o",      "wave": "x....................|..=.|.x", "data": ["r0..r63"] }
+  ["Output",
+    { "name": "busy_o",      "wave": "0...1.|.0.|1...|.0" },
+    { "name": "valid_o",     "wave": "0.....|...|..1.|.0" },
+    { "name": "ready_i",     "wave": "0.....|...|..1.|.0" },
+    { "name": "data_o",      "wave": "x.....|...|..==|=x", "data": ["r0","r1","r63"] }
   ]
 ],
-  "config": { "hscale": 1.0 },
-  "head": { "text": "rsa_top: public key operation sequence (1 parameter load example)" },
-  "foot": { "text": "| = gap (many cycles omitted). StLoad: 64 cycles/param. StPubExp: ~811K cycles (e=65537). StUnload: 64 cycles." }
+  "config": { "hscale": 1.3 },
+  "head": { "text": "rsa_top: public key operation sequence (| = time compression)" },
+  "foot": { "text": "StLoad: 64 cyc/param, StPubExp: ~811K cyc (e=65537), StUnload: 64 cyc. 1 word/cycle transfer." }
 }
