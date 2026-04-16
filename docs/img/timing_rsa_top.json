@@ -1,32 +1,34 @@
 { "signal": [
-  { "name": "clk",          "wave": "p........................." },
-  { "name": "rst_n",        "wave": "01........................" },
+  { "name": "clk",          "wave": "p............................" },
+  { "name": "rst_n",        "wave": "01..........................." },
   {},
-  [ "入力",
-    { "name": "valid_i",     "wave": "0..1.1.1.1.1.0............" },
-    { "name": "ready_o",     "wave": "0.1......................." },
-    { "name": "addr_i",      "wave": "x..=.........x............", "data": ["n (ID保持)"] },
-    { "name": "data_i",      "wave": "x..=.=.=.=.=.x............", "data": ["w0","w1","w2","...","w63"] },
-    { "name": "mode_i",      "wave": "x..=.........x............", "data": ["0"] },
-    { "name": "start_i",     "wave": "0.............10.........." }
+  [ "Input",
+    { "name": "valid_i",     "wave": "0..1.1.|.1.0................." },
+    { "name": "ready_o",     "wave": "0.1....................|....." },
+    { "name": "addr_i",      "wave": "x..=...|...x.................", "data": ["n (ID)"] },
+    { "name": "data_i",      "wave": "x..=.=.|.=.x.................", "data": ["w0","w1","w63"] },
+    { "name": "mode_i",      "wave": "x..=...|...x.................", "data": ["0"] },
+    { "name": "start_i",     "wave": "0..........10................" }
   ],
   {},
-  [ "内部",
-    { "name": "word_cnt",    "wave": "x..=.=.=.=.=.x............", "data": ["0","1","2","..","63"] },
-    { "name": "load_done",   "wave": "0...........10............" }
+  [ "Internal",
+    { "name": "word_cnt",    "wave": "x..=.=.|.=.x.........|..=.|.=.x", "data": ["0","1","63","0","63"] },
+    { "name": "load_done",   "wave": "0........10.................." },
+    { "name": "exp_done",    "wave": "0..............|.10.........." },
+    { "name": "unload_done", "wave": "0....................|....10." }
   ],
   {},
-  [ "状態",
-    { "name": "state_q",     "wave": "=..=.........=.=......=..=", "data": ["StIdle","StLoad","StIdle","StPubExp","StUnload","StIdle"] }
+  [ "State",
+    { "name": "state_q",     "wave": "=..=...|....=.=....|..=..|..=", "data": ["StIdle","StLoad","StIdle","StPubExp","StUnload","StIdle"] }
   ],
   {},
-  [ "出力",
-    { "name": "busy_o",      "wave": "0..............1.........0" },
-    { "name": "valid_o",     "wave": "0.....................1..0" },
-    { "name": "data_o",      "wave": "x.....................=..x", "data": ["result"] }
+  [ "Output",
+    { "name": "busy_o",      "wave": "0............1....|........0" },
+    { "name": "valid_o",     "wave": "0....................|..1.|.0" },
+    { "name": "data_o",      "wave": "x....................|..=.|.x", "data": ["r0..r63"] }
   ]
 ],
-  "config": { "hscale": 1.1 },
-  "head": { "text": "rsa_top: 公開鍵演算シーケンス (1パラメータロード例)" },
-  "foot": { "text": "addr_i=パラメータID保持, word_cnt 自動0→63, StUnload 完了後 StIdle 復帰" }
+  "config": { "hscale": 1.0 },
+  "head": { "text": "rsa_top: public key operation sequence (1 parameter load example)" },
+  "foot": { "text": "| = gap (many cycles omitted). StLoad: 64 cycles/param. StPubExp: ~811K cycles (e=65537). StUnload: 64 cycles." }
 }
