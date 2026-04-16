@@ -1,0 +1,5 @@
+parameter-name-style=localparam_style:ALL_CAPS|CamelCase
++port-name-suffix
++explicit-begin=if_enable:true;else_enable:true;always_enable:true;always_comb_enable:true;always_latch_enable:true;always_ff_enable:true;for_enable:true;forever_enable:true;foreach_enable:true;while_enable:true;initial_enable:true
++dff-name-style=input:;output:reg,r,ff,q;waive_ifs_with_conditions:!rst_ni;waive_lhs_regex:(?i)(mem.*|.*_o)
++one-module-per-file

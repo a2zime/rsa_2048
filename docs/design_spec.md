@@ -167,6 +167,8 @@ package rsa_pkg;
   localparam int unsigned ADDR_M1       = 10'h2A0;  // CRT 中間値: m1          32w
   localparam int unsigned ADDR_M2       = 10'h2C0;  // CRT 中間値: m2          32w
   localparam int unsigned ADDR_HQ       = 10'h2E0;  // CRT 中間値: h*q         64w
+  localparam int unsigned ADDR_BASE_P   = 10'h320;  // CRT: base mod p         32w
+  localparam int unsigned ADDR_BASE_Q   = 10'h340;  // CRT: base mod q         32w
 
   // パラメータアドレスエンコーディング（addr_i[3:0]）
   typedef enum logic [3:0] {
@@ -183,7 +185,9 @@ package rsa_pkg;
     ParamRSqP   = 4'hA,
     ParamRSqQ   = 4'hB,
     ParamNpP    = 4'hC,
-    ParamNqP    = 4'hD
+    ParamNqP    = 4'hD,
+    ParamBasP   = 4'hE,
+    ParamBasQ   = 4'hF
   } param_addr_e;
 
 endpackage
@@ -210,8 +214,10 @@ endpackage
 | 0x2A0 | 32 | CRT中間値 m1 |
 | 0x2C0 | 32 | CRT中間値 m2 |
 | 0x2E0 | 64 | CRT中間値 h*q |
+| 0x320 | 32 | CRT: base mod p |
+| 0x340 | 32 | CRT: base mod q |
 
-合計: ~816 ワード = 26,112 bit → BRAM36K 1 個（36,864 bit）に収容可能。
+合計: ~880 ワード = 28,160 bit → BRAM36K 1 個（36,864 bit）に収容可能。
 
 n_prime, np_prime, nq_prime（各32bit）は単一値のため BRAM ではなくレジスタに保持する。
 
@@ -444,17 +450,25 @@ module mod_exp #(
 ```systemverilog
 typedef enum logic [3:0] {
   StExpIdle,
-  StExpToMont,      // base をモンゴメリ形式に変換
-  StExpInitR,       // result = R mod n（1のモンゴメリ形式）を初期化
-  StExpScan,        // 指数ビット走査（メモリからワード読み出し）
-  StExpSquare,      // result の二乗を開始
-  StExpSquareWait,  // MontMul 完了待ち
-  StExpMul,         // result × base を開始（ビット=1の場合）
-  StExpMulWait,     // MontMul 完了待ち
-  StExpFromMont,    // result をモンゴメリドメインから復帰
-  StExpDone         // 完了通知
+  StExpToMont,         // base をモンゴメリ形式に変換（メモリコピー）
+  StExpToMontWait,     // MontMul 完了待ち
+  StExpInitR,          // result = R mod n を初期化（メモリコピー）
+  StExpInitRWait,      // MontMul 完了待ち
+  StExpScan,           // 指数ビット走査（メモリからワード読み出し）
+  StExpSquare,         // result の二乗を開始（メモリコピー + MontMul 起動）
+  StExpSquareWait,     // MontMul 完了待ち
+  StExpMul,            // result × base を開始（メモリコピー + MontMul 起動）
+  StExpMulWait,        // MontMul 完了待ち
+  StExpFromMont,       // result をモンゴメリドメインから復帰（メモリコピー + MontMul 起動）
+  StExpFromMontWait,   // MontMul 完了待ち
+  StExpCopyResult,     // MontMul 結果のメモリコピー（t[] → 適切な領域）
+  StExpDone            // 完了通知（最終結果を ADDR_RESULT にコピー）
 } mod_exp_state_e;
 ```
+
+各操作（ToMont, InitR, Square, Mul, FromMont）はメモリコピーフェーズ（オペランドの
+配置）と MontMul 待ちフェーズに分離される。`StExpCopyResult` は MontMul 結果 t[] を
+ADDR_BASE にコピーし、base_mont を ADDR_MONT_A に復元する汎用コピーステートである。
 
 **状態遷移図:**
 
@@ -462,18 +476,21 @@ typedef enum logic [3:0] {
 stateDiagram-v2
     [*] --> StExpIdle
     StExpIdle --> StExpToMont : start_i
-    StExpToMont --> StExpInitR : mont_done
-    StExpInitR --> StExpScan : mont_done
+    StExpToMont --> StExpToMontWait : メモリコピー完了
+    StExpToMontWait --> StExpInitR : mont_done
+    StExpInitR --> StExpInitRWait : メモリコピー完了
+    StExpInitRWait --> StExpCopyResult : mont_done
+    StExpCopyResult --> StExpScan : 残ビットあり
+    StExpCopyResult --> StExpFromMont : 最終ビット
     StExpScan --> StExpSquare
-    StExpSquare --> StExpSquareWait
-    StExpSquareWait --> StExpMul : mont_done &\nbit=1
-    StExpSquareWait --> StExpScan : mont_done &\nbit=0 &\n残ビットあり
-    StExpSquareWait --> StExpFromMont : mont_done &\nbit=0 &\n最終ビット
-    StExpMul --> StExpMulWait
-    StExpMulWait --> StExpScan : mont_done &\n残ビットあり
-    StExpMulWait --> StExpFromMont : mont_done &\n最終ビット
-    StExpFromMont --> StExpDone : mont_done
-    StExpDone --> StExpIdle
+    StExpSquare --> StExpSquareWait : メモリコピー完了
+    StExpSquareWait --> StExpMul : mont_done & bit=1
+    StExpSquareWait --> StExpCopyResult : mont_done & bit=0
+    StExpMul --> StExpMulWait : メモリコピー完了
+    StExpMulWait --> StExpCopyResult : mont_done
+    StExpFromMont --> StExpFromMontWait : メモリコピー完了
+    StExpFromMontWait --> StExpDone : mont_done
+    StExpDone --> StExpIdle : 結果コピー完了
 ```
 
 **指数ビット走査:**
@@ -534,17 +551,26 @@ module mont_mul #(
 ```systemverilog
 typedef enum logic [3:0] {
   StMontIdle,
-  StMontOuterInit,    // 外部ループ初期化: i=0, b[i] ロード
-  StMontInnerFirst,   // j=0: (C,S) = t[0] + a[0]*b[i]; m 計算
-  StMontComputeM,     // m = S * n_prime[0] mod W
-  StMontMN0,          // (C,S) = S + m*n[0]; S を破棄（設計上 0）
-  StMontInnerLoop,    // j=1..s-1: a[j]*b[i] と m*n[j] を蓄積
-  StMontInnerStore,   // t[j-1] = S
-  StMontOuterEnd,     // t[s-1] = C; i をインクリメント
-  StMontFinalSub,     // 条件付き減算: t >= n なら t = t - n
+  StMontOuterInit,       // 外部ループ初期化: b[i] リード要求
+  StMontLoadBi,          // BRAM レイテンシ待ち、b[i] ラッチ、t[0] プリフェッチ
+  StMontInnerFirst,      // j=0: a[0] リード要求、t[0] 受信準備
+  StMontInnerFirstWait,  // t[0] ラッチ → a[0]*b[i]+t[0] → (C,S) 算出
+  StMontComputeM,        // m = S * n_prime[0] mod W（組み合わせ乗算）; n[0] プリフェッチ
+  StMontMN0,             // m*n[0] セットアップ
+  StMontMN0Wait,         // m*n[0]+S → キャリー算出; 内部ループ準備
+  StMontInnerLoop,       // j=1..s-1: a[j]*b[i] + t[j] → m*n[j] + S（サブステート制御）
+  StMontInnerLoopWait,   // （未使用: 待機はサブステートで処理）
+  StMontInnerStore,      // t[j-1] = S; 次 j のプリフェッチ
+  StMontOuterEnd,        // t[s-1] = C; i インクリメント
+  StMontFinalSub,        // 条件付き減算: 比較フェーズまたは書き戻しフェーズの開始
+  StMontWriteBack,       // 比較/減算のワード単位実行（サブステート制御）
   StMontDone
 } mont_mul_state_e;
 ```
+
+BRAM 読み出しの 1 サイクルレイテンシおよび mul_add_unit の 5 サイクルパイプラインに
+対応するため、Wait/Load ステートが追加されている。`StMontInnerLoop` と `StMontWriteBack`
+は `inner_sub_q` サブステートカウンタにより内部で複数フェーズを制御する。
 
 **状態遷移図:**
 
@@ -552,16 +578,21 @@ typedef enum logic [3:0] {
 stateDiagram-v2
     [*] --> StMontIdle
     StMontIdle --> StMontOuterInit : start_i
-    StMontOuterInit --> StMontInnerFirst : b[i] ロード完了
-    StMontInnerFirst --> StMontComputeM : a[0]*b[i] 完了
+    StMontOuterInit --> StMontLoadBi : b[i] リード要求
+    StMontLoadBi --> StMontInnerFirst : b[i] ラッチ
+    StMontInnerFirst --> StMontInnerFirstWait : a[0] リード要求
+    StMontInnerFirstWait --> StMontComputeM : a[0]*b[i]+t[0] 完了
     StMontComputeM --> StMontMN0 : m 計算完了
-    StMontMN0 --> StMontInnerLoop : m*n[0] 完了
+    StMontMN0 --> StMontMN0Wait : m*n[0] セットアップ
+    StMontMN0Wait --> StMontInnerLoop : m*n[0] 完了
     StMontInnerLoop --> StMontInnerStore : 積和完了
     StMontInnerStore --> StMontInnerLoop : j < s-1
     StMontInnerStore --> StMontOuterEnd : j = s-1
     StMontOuterEnd --> StMontOuterInit : i < s-1
     StMontOuterEnd --> StMontFinalSub : i = s-1
-    StMontFinalSub --> StMontDone : 減算完了
+    StMontFinalSub --> StMontWriteBack : ワード単位比較/減算
+    StMontWriteBack --> StMontFinalSub : 次ワード
+    StMontWriteBack --> StMontDone : 完了
     StMontDone --> StMontIdle
 ```
 
@@ -619,12 +650,13 @@ result = a_lo * b_lo
 
 | サイクル | 演算 |
 |---|---|
-| 1 | a_lo × b_lo |
-| 2 | a_lo × b_hi |
-| 3 | a_hi × b_lo |
-| 4 | a_hi × b_hi + シフト加算 + c 加算 |
+| 1 | 入力ラッチ（a, b, c をレジスタに保持）、cycle_q=0 |
+| 2 | a_lo × b_lo + c |
+| 3 | + (a_lo × b_hi) << 16 |
+| 4 | + (a_hi × b_lo) << 16 |
+| 5 | + (a_hi × b_hi) << 32 → done_o アサート |
 
-レイテンシ: 4 サイクル（DSP パイプライン含む）。
+レイテンシ: 5 サイクル（入力ラッチ 1 + 部分積 4）。start_i から done_o まで 5 クロック。
 
 **タイミングチャート:**
 
@@ -655,6 +687,13 @@ module crt_controller #(
   output logic                  exp_crt_mode_o,
   input  logic                  exp_done_i,
   input  logic                  exp_busy_i,
+  // mont_mul 直接制御（MulQinv で使用）
+  output logic                  mont_start_o,
+  output logic                  mont_mode_o,
+  input  logic                  mont_done_i,
+  input  logic                  mont_busy_i,
+  // n_prime 選択（1 = nq_prime 使用, 0 = np_prime 使用）
+  output logic                  use_nq_prime_o,
   // メモリインターフェース
   output logic                  mem_we_o,
   output logic                  mem_re_o,
@@ -662,12 +701,12 @@ module crt_controller #(
   output logic [WordWidth-1:0]  mem_wdata_o,
   input  logic [WordWidth-1:0]  mem_rdata_i,
   // DSP（mul_add_unit）インターフェース
-  // StCrtMulHQ / StCrtReduceP/Q で mul_add_unit を直接駆動するために共有
+  // StCrtMulHQ で mul_add_unit を直接駆動する
   // （mont_mul が Idle の期間のみ使用するため調停は不要）
   output logic                  mul_start_o,
   output logic [WordWidth-1:0]  mul_a_o,
   output logic [WordWidth-1:0]  mul_b_o,
-  output logic [2*WordWidth-1:0] mul_c_o,
+  output logic [WordWidth-1:0]  mul_c_o,
   input  logic [2*WordWidth-1:0] mul_result_i,
   input  logic                  mul_done_i
 );
@@ -687,17 +726,19 @@ module crt_controller #(
 ```systemverilog
 typedef enum logic [3:0] {
   StCrtIdle,
-  StCrtReduceP,      // base mod p を計算（2048bit → 1024bit 剰余）
-  StCrtExpP,          // m1 = base^dp mod p を開始
-  StCrtExpPWait,      // mod_exp 完了待ち
-  StCrtReduceQ,       // base mod q を計算
-  StCrtExpQ,          // m2 = base^dq mod q を開始
-  StCrtExpQWait,      // mod_exp 完了待ち
-  StCrtSubM,          // h_temp = m1 - m2（負なら mod p で補正）
-  StCrtMulQinv,       // h = qinv × h_temp mod p を開始
-  StCrtMulQinvWait,   // MontMul 完了待ち
-  StCrtMulHQ,         // h × q（1024×1024 → 2048bit）
-  StCrtAddM2,         // result = m2 + h×q
+  StCrtReduceP,       // base_p/dp/p/R^2_p を ADDR_BASE/EXP/MOD/RSQ にコピー
+  StCrtExpP,           // m1 = base_p^dp mod p を開始
+  StCrtExpPWait,       // mod_exp 完了待ち
+  StCrtReduceQ,        // m1 を退避, base_q/dq/q/R^2_q をコピー
+  StCrtExpQ,           // R^2_q コピー完了後 mod_exp を開始
+  StCrtExpQWait,       // mod_exp 完了待ち
+  StCrtSubM,           // h_temp = m1 - m2（負なら +p で補正）
+  StCrtMulQinv,        // MontMul(qinv, h_temp, p) セットアップ → mont_mul 起動
+  StCrtMulQinvWait,    // MontMul 1 回目完了待ち
+  StCrtMulQinv2,       // MontMul(result, R^2_p, p) セットアップ → mont_mul 起動
+  StCrtMulQinv2Wait,   // MontMul 2 回目完了待ち → h = qinv * h_temp mod p
+  StCrtMulHQ,          // h × q（1024×1024 → 2048bit、schoolbook 乗算）
+  StCrtAddM2,          // result = m2 + h×q
   StCrtDone
 } crt_state_e;
 ```
@@ -708,45 +749,60 @@ typedef enum logic [3:0] {
 stateDiagram-v2
     [*] --> StCrtIdle
     StCrtIdle --> StCrtReduceP : start_i
-    StCrtReduceP --> StCrtExpP : base mod p 完了
+    StCrtReduceP --> StCrtExpP : パラメータコピー完了
     StCrtExpP --> StCrtExpPWait : exp_start
     StCrtExpPWait --> StCrtReduceQ : exp_done (m1 格納)
-    StCrtReduceQ --> StCrtExpQ : base mod q 完了
-    StCrtExpQ --> StCrtExpQWait : exp_start
+    StCrtReduceQ --> StCrtExpQ : パラメータコピー完了
+    StCrtExpQ --> StCrtExpQWait : R^2_q コピー完了, exp_start
     StCrtExpQWait --> StCrtSubM : exp_done (m2 格納)
     StCrtSubM --> StCrtMulQinv : h_temp 計算完了
-    StCrtMulQinv --> StCrtMulQinvWait : mont_start
-    StCrtMulQinvWait --> StCrtMulHQ : mont_done (h 格納)
+    StCrtMulQinv --> StCrtMulQinvWait : mont_start (直接)
+    StCrtMulQinvWait --> StCrtMulQinv2 : mont_done
+    StCrtMulQinv2 --> StCrtMulQinv2Wait : mont_start (直接)
+    StCrtMulQinv2Wait --> StCrtMulHQ : mont_done (h 格納)
     StCrtMulHQ --> StCrtAddM2 : h*q 計算完了
     StCrtAddM2 --> StCrtDone : result 格納完了
     StCrtDone --> StCrtIdle
 ```
 
-**base mod p/q の計算:**
-入力 base（2048bit）に対して base mod p を計算する必要がある。
-base < n = p×q であるため、モンゴメリ乗算器を 1024bit モードで再利用して
-剰余を計算する（`MontMul(base, 1, p)` で R^(-1) 補正後に再変換）。
+**base mod p/q の入力方式:**
+base（2048bit）から base mod p（1024bit）への剰余削減は、ハードウェアでの実装が
+複雑なため、ホスト（ソフトウェア）側で前計算する方式を採用する。
+ホストは `ParamBasP`（base mod p）と `ParamBasQ`（base mod q）を
+ADDR_BASE_P / ADDR_BASE_Q に格納する。crt_controller の StCrtReduceP / StCrtReduceQ
+はこれらの前計算済み値を ADDR_BASE にコピーして mod_exp に渡す。
+
+**MulQinv の実装:**
+h = qinv × h_temp mod p の計算には、crt_controller が mont_mul を **直接駆動** する。
+mod_exp は累乗演算専用であり、単純な乗算には適さないため、crt_controller に
+`mont_start_o` ポートを追加し、rsa_top 側で mod_exp と crt_controller の
+mont_mul 起動信号を調停する。2 回の MontMul で R^{-1} 補正を行う：
+1. MontMul(qinv, h_temp, p) → qinv × h_temp × R^{-1} mod p
+2. MontMul(result, R^2_p, p) → qinv × h_temp mod p
+
+**n_prime の切替:**
+CRT モードでは p 系演算（ExpP, MulQinv）に np_prime、q 系演算（ExpQ）に nq_prime
+を使用する。crt_controller が `use_nq_prime_o` 信号を出力し、rsa_top の
+`active_n_prime` セレクタを制御する。
 
 **mul_add_unit の共有:**
-`StCrtReduceP` / `StCrtReduceQ` / `StCrtMulHQ` では `crt_controller` が
-`mul_add_unit` を **直接駆動** する。具体的には `h × q`（1024×1024→2048bit）
-のマルチワード乗算は通常のモジュラー乗算ではないため、mont_mul を経由せず
-crt_controller が自前で制御する。これらの状態では `mont_mul` は Idle で
-ある（直前の `StCrtMulQinvWait` で演算を終えている）ため、mul_add_unit の
-使用競合は発生しない。rsa_top 側でアービトレーションを行い、CRT 実行中は
-`crt_controller` 側に DSP 駆動権を譲る。
+`StCrtMulHQ` では `crt_controller` が `mul_add_unit` を **直接駆動** する。
+`h × q`（1024×1024→2048bit）のマルチワード乗算は schoolbook アルゴリズムで
+ワード単位に実行する。この状態では `mont_mul` は Idle であるため、
+mul_add_unit の使用競合は発生しない。
 
 **状態別の他モジュール通信サマリ:**
 
 | 状態 | 通信先 | 内容 |
 |---|---|---|
-| StCrtReduceP | mem (Port A) / mul_add_unit | base 読出 → mul_add_unit で base mod p 計算 |
+| StCrtReduceP | mem (Port A) | base_p/dp/p/R^2_p を所定アドレスにコピー |
 | StCrtExpP / StCrtExpPWait | mod_exp | exp_start → exp_done 待ち（mod_exp が mont_mul/mem/DSP を使用） |
-| StCrtReduceQ | mem (Port A) / mul_add_unit | base 読出 → mul_add_unit で base mod q 計算 |
-| StCrtExpQ / StCrtExpQWait | mod_exp | exp_start → exp_done 待ち |
-| StCrtSubM | mem (Port A) | m1 / m2 を順次読み出して差分を計算（DSP 不要） |
-| StCrtMulQinv / MulQinvWait | mod_exp | 1024bit MontMul で h = qinv×(m1-m2) mod p |
-| StCrtMulHQ | mem (Port A) / mul_add_unit | h / q 読出 → mul_add_unit で 1024×1024→2048bit 乗算 |
+| StCrtReduceQ | mem (Port A) | m1 退避、base_q/dq/q/R^2_q をコピー |
+| StCrtExpQ / StCrtExpQWait | mod_exp | R^2_q コピー後 exp_start → exp_done 待ち |
+| StCrtSubM | mem (Port A) | m2 退避、m1 - m2 計算、必要に応じて +p 補正 |
+| StCrtMulQinv / MulQinvWait | mont_mul (直接), mem (Port A) | qinv/h_temp/p セットアップ → MontMul 1 回目 |
+| StCrtMulQinv2 / Qinv2Wait | mont_mul (直接), mem (Port A) | result/R^2_p セットアップ → MontMul 2 回目 |
+| StCrtMulHQ | mem (Port A), mul_add_unit | h × q schoolbook 乗算（ワード単位） |
 | StCrtAddM2 | mem (Port A) | result = m2 + h×q をワード単位で加算 |
 
 **タイミングチャート:**
@@ -857,7 +913,7 @@ sequenceDiagram
     participant MONT as mont_mul
 
     Note over H,MONT: パラメータロードフェーズ
-    H->>IO: data_i (base, p, q, dp, dq, qinv, R^2_p, R^2_q, np', nq')
+    H->>IO: data_i (base, p, q, dp, dq, qinv, R^2_p, R^2_q, np', nq', base_p, base_q)
     IO->>MEM: mem_we (各パラメータ領域)
     IO-->>RSA: load_done
 
@@ -866,7 +922,7 @@ sequenceDiagram
     RSA->>CRT: start
 
     Note over CRT,MONT: m1 = base^dp mod p
-    CRT->>MEM: base mod p を計算・格納
+    CRT->>MEM: base_p/dp/p/R^2_p をコピー
     CRT->>EXP: exp_start (1024bit mode)
     EXP->>MONT: mont_start (反復)
     MONT->>MEM: mem_re/we
@@ -874,7 +930,7 @@ sequenceDiagram
     EXP-->>CRT: exp_done (m1 格納)
 
     Note over CRT,MONT: m2 = base^dq mod q
-    CRT->>MEM: base mod q を計算・格納
+    CRT->>MEM: m1 退避, base_q/dq/q/R^2_q をコピー
     CRT->>EXP: exp_start (1024bit mode)
     EXP->>MONT: mont_start (反復)
     MONT->>MEM: mem_re/we
@@ -882,9 +938,12 @@ sequenceDiagram
     EXP-->>CRT: exp_done (m2 格納)
 
     Note over CRT,MONT: CRT再結合
-    CRT->>MEM: h_temp = m1 - m2 (mod p 補正)
-    CRT->>MONT: mont_start (h = qinv * h_temp mod p)
+    CRT->>MEM: m2 退避, h_temp = m1 - m2 (負なら +p 補正)
+    CRT->>MONT: mont_start (MontMul 1: qinv * h_temp)
     MONT-->>CRT: mont_done
+    CRT->>MONT: mont_start (MontMul 2: R^{-1} 補正)
+    MONT-->>CRT: mont_done (h = qinv * h_temp mod p)
+    CRT->>MEM: h * q (schoolbook 乗算, mul_add_unit 使用)
     CRT->>MEM: result = m2 + h * q
     CRT-->>RSA: done
 
@@ -951,7 +1010,7 @@ rtl/
 |---|---|---|
 | モンゴメリバリエーション | FIOS（32bit ワード） | 中間記憶最小、単一内部ループ、データバス幅と一致 |
 | 累乗方式 | Left-to-right binary | 制御最シンプル、前計算テーブル不要、検証容易 |
-| DSP 使用数 | 1 DSP48E1 | 最小リソース; 32×32 を 4 回の 16×16 部分積で実行 |
+| DSP 使用数 | 1 DSP48E1 | 最小リソース; 32×32 を 4 回の 16×16 部分積で実行（5 サイクル） |
 | オペランド記憶 | 1 BRAM36K デュアルポート | 全オペランドを 1 メモリに集約、I/O と演算で調停 |
 | CRT 再結合 | mont_mul を 1024bit モードで再利用 | 追加乗算器不要 |
 | 幅切替 | half_mode 信号 | 単一の mont_mul インスタンスで 2048/1024 両対応 |
@@ -1080,6 +1139,7 @@ result = MontMul(result, 1, n)          // result * R^(-1) mod n
 - `R^2 mod n` : R = 2^2048（公開鍵演算用）
 - `n'[0]` : `-n^(-1) mod 2^32`
 - CRT 用: `R^2 mod p`, `R^2 mod q`, `-p^(-1) mod 2^32`, `-q^(-1) mod 2^32`
+- CRT 用: `base mod p`, `base mod q`（2048bit→1024bit の剰余削減はホスト側で実行）
 
 ### 11.4 外部インターフェース: addr_i セマンティクス
 
@@ -1100,7 +1160,7 @@ mem_addr_o = param_base_addr(addr_i) + word_cnt
 
 | 観点 | パラメータ ID + 内部カウンタ（採用） | 外部フルアドレス方式 |
 |---|---|---|
-| `addr_i` ビット幅 | 4bit（パラメータ ID 10 種） | 10bit（1024 ワード空間） |
+| `addr_i` ビット幅 | 4bit（パラメータ ID 16 種） | 10bit（1024 ワード空間） |
 | ホスト側ロジック | パラメータごとに `addr_i` を 1 回設定するだけ | ホスト側でワードカウンタが必要 |
 | 転送境界の検出 | `(word_cnt == N-1)` で load_done をパルス生成 | 境界情報がバス上に無い／別途 last 信号が必要 |
 | 誤アドレスリスク | パラメータ領域外への書き込み不可（デコーダが安全側） | ホストのアドレス誤りで任意領域を上書きし得る |
@@ -1150,7 +1210,7 @@ io_controller のロード期間、mont_mul の演算期間、crt_controller の
 ```
 
 1 イテレーション当たり **読み出し 3 回 + 書き込み 1 回 = 4 メモリアクセス**。
-mul_add_unit の 4 サイクル演算とパイプライン整合させるため、
+mul_add_unit の 5 サイクル演算とパイプライン整合させるため、
 `j` 当たり実効 6 サイクルを目標とする。
 
 **シングルポート vs デュアルポート比較:**
