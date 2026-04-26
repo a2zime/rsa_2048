@@ -1,11 +1,21 @@
 # RSA-2048 IP 検証仕様書
 
 **作成日**: 2026年4月18日
+**更新日**: 2026年4月26日
 **作成者**: a2zime × Claude Code
-**バージョン**: 1.0
+**バージョン**: 1.1
 **前提ドキュメント**:
 - [要求仕様書](requirements.md)
 - [設計仕様書](design_spec.md)
+
+---
+
+## 変更履歴
+
+| バージョン | 日付 | 変更内容 |
+|---|---|---|
+| 1.0 | 2026-04-18 | 初版作成 |
+| 1.1 | 2026-04-26 | 各検証項目に「検証方法」列を追加。MAU-03/04 の項目名・期待出力の説明を明確化。MAU-07・MM-11 の検証手順を具体化。（Issue #10 対応） |
 
 ---
 
@@ -151,24 +161,37 @@ Python で実装した参照モデルを唯一の正解源（golden model）と�
 
 ## 5. モジュール別検証項目
 
+### 検証方法の凡例
+
+各テーブルの「検証方法」列で使用する手順の略称を以下に示す。
+
+| 略称 | 内容 |
+|---|---|
+| bit-exact比較 | Python参照モデルの出力と DUT 出力を全ビット一致で確認（不一致は `$fatal`） |
+| サイクルカウント | テストベンチのカウンタで start_i アサートから done_o アサートまでのクロック数を計測し、期待値と一致することを `$display` で確認 |
+| 波形アサーション | SystemVerilog `assert` または GTKWave 波形で信号状態・遷移を確認（違反時は `$fatal`） |
+| 波形確認 | 対象信号の値・タイミングを `$display` ログまたは波形で目視確認 |
+
+---
+
 ### 5.1 mul_add_unit — 32×32 積和演算ユニット
 
 **参照モデル:** Python の任意精度整数演算で `result = (a*b + c) & ((1<<64)-1)`。
 
 **タイミング要求:** `start_i` アサート後、5 サイクルで `done_o` がアサートされること。
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| MAU-01 | 基本動作（乗算のみ） | 正常系 | a=0x1234_5678, b=0x9ABC_DEF0, c=0 | `a*b` の 64bit 値 |
-| MAU-02 | 基本動作（積和） | 正常系 | ランダム a, b, c（100 ケース） | `(a*b+c) & 2^64-1` |
-| MAU-03 | 全ビット検証（a=0） | 境界値 | a=0, b=任意, c=任意 | c |
-| MAU-04 | 全ビット検証（b=0） | 境界値 | a=任意, b=0, c=任意 | c |
-| MAU-05 | 全ビット検証（a=all-1, b=all-1） | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | 0xFFFF_FFFE_0000_0000 |
-| MAU-06 | 桁上がり最大 | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | オーバーフローせず 64bit 以内に収まること |
-| MAU-07 | 5 サイクルレイテンシ | タイミング | start → done のクロック数 | ちょうど 5 クロック |
-| MAU-08 | 連続実行 | 正常系 | done 後すぐ次の start | 正しく連続処理されること |
-| MAU-09 | リセット中 start 無視 | 異常系 | rst_n=0 中に start_i をアサート | done_o が立たず、result_o が 0 |
-| MAU-10 | 入力安定性違反は呼出側責務 | — | start 中の a,b,c 変化は未定義（呼び出し側で保証） | 検証対象外（設計前提） |
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| MAU-01 | 基本動作（乗算のみ） | 正常系 | a=0x1234_5678, b=0x9ABC_DEF0, c=0 | `a*b` の 64bit 値 | Python `(a*b) & (2**64-1)` と DUT result_o を bit-exact比較 |
+| MAU-02 | 基本動作（積和） | 正常系 | ランダム a, b, c（100 ケース） | `(a*b+c) & 2^64-1` | 全 100 ケースで Python参照と DUT result_o を bit-exact比較 |
+| MAU-03 | ゼロ入力（a=0） | 境界値 | a=0, b=任意, c=任意 | result_o = c（a×b = 0 のため乗算項が消え加算項のみ残る） | Python `(0*b+c) & (2**64-1)` と DUT result_o を bit-exact比較。期待値が c そのものであることを確認 |
+| MAU-04 | ゼロ入力（b=0） | 境界値 | a=任意, b=0, c=任意 | result_o = c（a×b = 0 のため乗算項が消え加算項のみ残る） | Python `(a*0+c) & (2**64-1)` と DUT result_o を bit-exact比較。期待値が c そのものであることを確認 |
+| MAU-05 | 全ビット最大入力 | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | 0xFFFF_FFFE_0000_0000 | Python参照と DUT result_o を bit-exact比較 |
+| MAU-06 | 桁上がり最大（64bit 収まり確認） | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | オーバーフローせず 64bit 以内に収まること | result_o が 64bit 幅に収まること（Python参照と bit-exact比較で自動的に確認）。波形アサーションで result_o[63:0] に X/Z が出ないことも確認 |
+| MAU-07 | 5 サイクルレイテンシ | タイミング | start_i アサートから done_o アサートまでのクロック数 | ちょうど 5 クロック | テストベンチで start_i アサートサイクルを起点にカウンタを起動し、done_o がアサートされたサイクルのカウント値が 5 と一致することを `$display` で出力・確認。不一致の場合は `$fatal` で終了 |
+| MAU-08 | 連続実行 | 正常系 | done_o アサート後、次サイクルで再び start_i | 各回の result_o が参照値と一致 | 連続 N 回実行し、各回 Python参照と DUT result_o を bit-exact比較 |
+| MAU-09 | リセット中 start 無視 | 異常系 | rst_n=0 中に start_i をアサート | done_o が立たず、result_o が 0 | 波形アサーションで rst_n=0 期間中 done_o=0 かつ result_o=0 であることを確認（違反時 `$fatal`） |
+| MAU-10 | 入力安定性違反は呼出側責務 | — | start 中の a,b,c 変化は未定義（呼び出し側で保証） | 検証対象外（設計前提） | — |
 
 **合否判定:** 全ケースで result_o・done_o の時刻と値が参照と bit-exact 一致。
 
@@ -191,24 +214,24 @@ def mont_mul(a, b, n, R, n_prime):
 - 2048bit モード: 概ね 24K〜27K サイクル（設計仕様 §6.2）
 - 1024bit モード: 概ね 6K〜8K サイクル
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| MM-01 | 2048bit 基本動作 | 正常系 | NIST 鍵由来の a, b, n（5 ケース） | 参照値と一致 |
-| MM-02 | 2048bit ランダム | 正常系 | ランダム a, b, n（n は奇数・MSB=1）（20 ケース） | 参照値と一致 |
-| MM-03 | 1024bit 基本動作（half_mode） | 正常系 | CRT パラメータ由来の a, b, p（5 ケース） | 参照値と一致 |
-| MM-04 | 1024bit ランダム | 正常系 | ランダム a, b, p（20 ケース） | 参照値と一致 |
-| MM-05 | a = 0 | 境界値 | a=0, b=任意, n=任意 | 0 |
-| MM-06 | b = 0 | 境界値 | a=任意, b=0, n=任意 | 0 |
-| MM-07 | a = n-1, b = n-1 | 境界値 | 最大オペランド | 参照値と一致 |
-| MM-08 | 最終条件付き減算が発火するケース | 境界値 | 中間 t ≥ n となる入力 | `t - n` が得られること |
-| MM-09 | 最終条件付き減算が発火しないケース | 境界値 | 中間 t < n のままとなる入力 | `t` がそのまま得られること |
-| MM-10 | R^(-1) 性質検証 | 機能 | MontMul(a, R^2 mod n, n) × MontMul(1, 1, n) 等 | 数学的恒等式が成立すること |
-| MM-11 | half_mode 切替 | 機能 | 2048→1024→2048 と連続実行 | 各回とも正しい幅で動作 |
-| MM-12 | 内部ループサイクル数 | タイミング | 2048bit MontMul の done 時刻 | 25K サイクル以内 |
-| MM-13 | t[] の残留影響なし | 機能 | 連続 MontMul（t[] が初期化されること） | 次回演算に前回の中間値が影響しないこと |
-| MM-14 | リセット中 start 無視 | 異常系 | rst_n=0 中 start_i | done_o 立たず busy_o=0 |
-| MM-15 | mul_add_unit との接続 | プロトコル | mul_start / mul_done / mul_result の波形整合 | start→5cyc→done の不変条件 |
-| MM-16 | メモリポート衝突なし | プロトコル | Port B の re/we 同時アサートなし | 同一サイクルで re=1 かつ we=1 にならない |
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| MM-01 | 2048bit 基本動作 | 正常系 | NIST 鍵由来の a, b, n（5 ケース） | 参照値と一致 | Python `mont_mul()` と DUT result_o を bit-exact比較 |
+| MM-02 | 2048bit ランダム | 正常系 | ランダム a, b, n（n は奇数・MSB=1）（20 ケース） | 参照値と一致 | 全 20 ケースで Python参照と DUT result_o を bit-exact比較 |
+| MM-03 | 1024bit 基本動作（half_mode） | 正常系 | CRT パラメータ由来の a, b, p（5 ケース） | 参照値と一致 | Python `mont_mul()` と DUT result_o を bit-exact比較 |
+| MM-04 | 1024bit ランダム | 正常系 | ランダム a, b, p（20 ケース） | 参照値と一致 | 全 20 ケースで Python参照と DUT result_o を bit-exact比較 |
+| MM-05 | a = 0 | 境界値 | a=0, b=任意, n=任意 | 0 | Python参照（結果 = 0）と DUT result_o を bit-exact比較 |
+| MM-06 | b = 0 | 境界値 | a=任意, b=0, n=任意 | 0 | Python参照（結果 = 0）と DUT result_o を bit-exact比較 |
+| MM-07 | a = n-1, b = n-1 | 境界値 | 最大オペランド | 参照値と一致 | Python参照と DUT result_o を bit-exact比較 |
+| MM-08 | 最終条件付き減算が発火するケース | 境界値 | 中間 t ≥ n となる入力 | `t - n` が得られること | Python参照と DUT result_o を bit-exact比較。波形で内部 `sub_en` 信号がアサートされることを確認 |
+| MM-09 | 最終条件付き減算が発火しないケース | 境界値 | 中間 t < n のままとなる入力 | `t` がそのまま得られること | Python参照と DUT result_o を bit-exact比較。波形で内部 `sub_en` 信号が非アサートであることを確認 |
+| MM-10 | R^(-1) 性質検証 | 機能 | MontMul(a, R^2 mod n, n) × MontMul(1, 1, n) 等 | 数学的恒等式が成立すること | Python参照の恒等式結果と DUT 出力を bit-exact比較 |
+| MM-11 | half_mode 切替 | 機能 | 2048→1024→2048 と連続実行（各 1 ケース以上） | 各回とも正しい幅で動作 | ① 各回 Python参照（2048bit または 1024bit の `mont_mul()`）と DUT result_o を bit-exact比較 ② 波形で内部カウンタ（`step_cnt`）の最大値が 2048bit モードでは 2048・1024bit モードでは 1024 に切り替わっていることを確認 |
+| MM-12 | 内部ループサイクル数 | タイミング | 2048bit MontMul の done 時刻 | 25K サイクル以内 | サイクルカウント（start_i〜done_o 間）を計測し、25,000 以下であることを確認 |
+| MM-13 | t[] の残留影響なし | 機能 | 連続 MontMul（t[] が初期化されること） | 次回演算に前回の中間値が影響しないこと | 同一入力を 2 回連続実行し、2 回とも同一の Python参照値と bit-exact比較 |
+| MM-14 | リセット中 start 無視 | 異常系 | rst_n=0 中 start_i | done_o 立たず busy_o=0 | 波形アサーションで rst_n=0 期間中 done_o=0 かつ busy_o=0 を確認（違反時 `$fatal`） |
+| MM-15 | mul_add_unit との接続 | プロトコル | mul_start / mul_done / mul_result の波形整合 | start→5cyc→done の不変条件 | 波形アサーションで mul_start アサートから 5 サイクル後に mul_done がアサートされることを確認 |
+| MM-16 | メモリポート衝突なし | プロトコル | Port B の re/we 同時アサートなし | 同一サイクルで re=1 かつ we=1 にならない | 波形アサーションで `b_re && b_we` の同時アサートを検出（発生した場合 `$fatal`） |
 
 **合否判定:** MM-01〜MM-11 は bit-exact 一致。MM-12 はサイクル数の範囲判定。
 MM-13〜MM-16 は波形アサーションで検出。
@@ -219,24 +242,24 @@ MM-13〜MM-16 は波形アサーションで検出。
 
 **参照モデル:** Python の `pow(base, exp, n)`。
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| ME-01 | 2048bit 基本動作（e=65537） | 正常系 | NIST 鍵 3 種 | 参照値と一致 |
-| ME-02 | 2048bit 基本動作（e=3） | 正常系 | ランダム鍵 | 参照値と一致 |
-| ME-03 | 2048bit ランダム指数 | 正常系 | 2048bit 指数ランダム（5 ケース） | 参照値と一致 |
-| ME-04 | 1024bit モード（CRT 前提） | 正常系 | 1024bit の (base, dp, p) 等（5 ケース） | 参照値と一致 |
-| ME-05 | exp = 0 | 境界値 | base=任意, exp=0, n=任意 | 1 mod n |
-| ME-06 | exp = 1 | 境界値 | base=任意, exp=1, n=任意 | base mod n |
-| ME-07 | base = 0 | 境界値 | base=0, exp≠0, n=任意 | 0 |
-| ME-08 | base = 1 | 境界値 | base=1, exp=任意, n=任意 | 1 |
-| ME-09 | base = n-1（= -1 mod n） | 境界値 | base=n-1 | exp の偶奇で n-1 or 1 |
-| ME-10 | 最上位ビットのみ 1 | 境界値 | exp = 2^2047 | 正しく計算されること |
-| ME-11 | 最下位ビットのみ 1 | 境界値 | exp = 1 | base mod n |
-| ME-12 | MSB→LSB 走査順の確認 | 機能 | 既知指数での中間結果トレース | 設計仕様の走査順と一致 |
-| ME-13 | ToMont / FromMont 正当性 | 機能 | Montgomery 変換前後の値を参照と比較 | 変換が bit-exact |
-| ME-14 | 連続 2 回実行 | 機能 | done 後すぐ次の start | 2 回目も正しく完了 |
-| ME-15 | リセット中断耐性 | 異常系 | 演算中 rst_n=0 → 再開 | 次の start で正常動作 |
-| ME-16 | mont_mul 起動数 | トレース | mont_start アサート回数 | 設計想定数（例: 17bit指数 → 33 回） |
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| ME-01 | 2048bit 基本動作（e=65537） | 正常系 | NIST 鍵 3 種 | 参照値と一致 | Python `pow(base, e, n)` と DUT result_o を bit-exact比較 |
+| ME-02 | 2048bit 基本動作（e=3） | 正常系 | ランダム鍵 | 参照値と一致 | Python参照と DUT result_o を bit-exact比較 |
+| ME-03 | 2048bit ランダム指数 | 正常系 | 2048bit 指数ランダム（5 ケース） | 参照値と一致 | 全 5 ケースで Python参照と DUT result_o を bit-exact比較 |
+| ME-04 | 1024bit モード（CRT 前提） | 正常系 | 1024bit の (base, dp, p) 等（5 ケース） | 参照値と一致 | Python `pow(base, dp, p)` と DUT result_o を bit-exact比較 |
+| ME-05 | exp = 0 | 境界値 | base=任意, exp=0, n=任意 | 1 mod n | Python `pow(base, 0, n)` = 1 と DUT result_o を bit-exact比較 |
+| ME-06 | exp = 1 | 境界値 | base=任意, exp=1, n=任意 | base mod n | Python参照と DUT result_o を bit-exact比較 |
+| ME-07 | base = 0 | 境界値 | base=0, exp≠0, n=任意 | 0 | Python参照（結果 = 0）と DUT result_o を bit-exact比較 |
+| ME-08 | base = 1 | 境界値 | base=1, exp=任意, n=任意 | 1 | Python参照（結果 = 1）と DUT result_o を bit-exact比較 |
+| ME-09 | base = n-1（= -1 mod n） | 境界値 | base=n-1 | exp の偶奇で n-1 or 1 | Python参照と DUT result_o を bit-exact比較 |
+| ME-10 | 最上位ビットのみ 1 | 境界値 | exp = 2^2047 | 正しく計算されること | Python参照と DUT result_o を bit-exact比較 |
+| ME-11 | 最下位ビットのみ 1 | 境界値 | exp = 1 | base mod n | Python参照と DUT result_o を bit-exact比較 |
+| ME-12 | MSB→LSB 走査順の確認 | 機能 | 既知指数での中間結果トレース | 設計仕様の走査順と一致 | 波形で mont_start アサートのタイミングと指数ビット列の処理順序を照合 |
+| ME-13 | ToMont / FromMont 正当性 | 機能 | Montgomery 変換前後の値を参照と比較 | 変換が bit-exact | Python参照の Montgomery 変換値と DUT 内部信号（波形）を照合 |
+| ME-14 | 連続 2 回実行 | 機能 | done_o 後すぐ次の start_i | 2 回目も正しく完了 | 2 回とも Python参照と DUT result_o を bit-exact比較 |
+| ME-15 | リセット中断耐性 | 異常系 | 演算中 rst_n=0 → 再開 | 次の start_i で正常動作 | リセット後に再実行し、Python参照と DUT result_o を bit-exact比較 |
+| ME-16 | mont_mul 起動数 | トレース | mont_start アサート回数 | 設計想定数（例: 17bit指数 → 33 回） | 波形で mont_start_o のアサート回数をカウントし、期待値と一致することを `$display` で確認 |
 
 **合否判定:** ME-01〜ME-11 は最終結果の bit-exact 一致。ME-12, ME-13 は中間波形トレース比較。
 
@@ -246,22 +269,22 @@ MM-13〜MM-16 は波形アサーションで検出。
 
 **参照モデル:** Python で (addr_i, N, LSB-first) から mem_addr, mem_wdata の期待列を生成。
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| IO-01 | 2048bit パラメータロード | 正常系 | addr_i=ParamBase, 64 ワード | mem_addr=ADDR_BASE..+63 の順、mem_wdata 一致 |
-| IO-02 | 1024bit パラメータロード | 正常系 | addr_i=ParamP, 32 ワード | mem_addr=ADDR_P..+31、load_done が 32 サイクル目に 1 パルス |
-| IO-03 | 32bit パラメータロード | 正常系 | addr_i=ParamNPrime 相当, 1 ワード | 1 サイクルで load_done |
-| IO-04 | 全パラメータ ID 網羅 | 正常系 | param_addr_e の 16 種全て | それぞれ正しい ADDR_* にマップされること |
-| IO-05 | LSB-first 順序 | 機能 | 入力列 w0, w1, ..., w63 | word_cnt=0 のとき LSB（w0）が書かれる |
-| IO-06 | load_done パルス幅 | プロトコル | 最終ワード受信時 | 1 クロック幅のパルス |
-| IO-07 | unload 2048bit | 正常系 | unload_en_i, N=64 | data_o が 64 ワード出力、unload_done が最終 |
-| IO-08 | unload 1024bit | 正常系 | unload_en_i, N=32 | 32 ワード出力 |
-| IO-09 | Valid/Ready ハンドシェイク | プロトコル | ready_o=0 中は word_cnt 変化なし | Valid/Ready 成立サイクルのみカウント進行 |
-| IO-10 | ready_i バックプレッシャ | プロトコル | unload 中 ready_i=0 期間 | valid_o と data_o が保持され、カウンタ停止 |
-| IO-11 | 連続パラメータロード | 機能 | param1 → param2 を連続投入 | 各パラメータで load_done が 1 回、領域が干渉しない |
-| IO-12 | リセット中の load_en 無視 | 異常系 | rst_n=0 中 load_en_i | mem_we_o が立たない |
-| IO-13 | 不正 addr_i（予約値） | 異常系 | ParamBase〜ParamBasQ 以外を投入 | 書き込み抑止 or 仕様通りのデフォルト動作（設計確認） |
-| IO-14 | load_en と unload_en の同時アサートなし | プロトコル | 設計上禁止、アサート違反時の挙動 | StIoIdle が優先される（実装確認） |
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| IO-01 | 2048bit パラメータロード | 正常系 | addr_i=ParamBase, 64 ワード | mem_addr=ADDR_BASE..+63 の順、mem_wdata 一致 | Python生成の期待アドレス列・データ列と DUT mem_addr_o / mem_wdata_o を bit-exact比較 |
+| IO-02 | 1024bit パラメータロード | 正常系 | addr_i=ParamP, 32 ワード | mem_addr=ADDR_P..+31、load_done が 32 サイクル目に 1 パルス | Python参照と bit-exact比較。サイクルカウントで load_done の発生サイクルを確認 |
+| IO-03 | 32bit パラメータロード | 正常系 | addr_i=ParamNPrime 相当, 1 ワード | 1 サイクルで load_done | サイクルカウントで load_done が 1 サイクル目にアサートされることを確認 |
+| IO-04 | 全パラメータ ID 網羅 | 正常系 | param_addr_e の 16 種全て | それぞれ正しい ADDR_* にマップされること | 全 16 種の addr_i に対して Python参照のアドレスマップと mem_addr_o を bit-exact比較 |
+| IO-05 | LSB-first 順序 | 機能 | 入力列 w0, w1, ..., w63 | word_cnt=0 のとき LSB（w0）が書かれる | 波形で mem_addr_o の初期値と mem_wdata_o = w0 を確認 |
+| IO-06 | load_done パルス幅 | プロトコル | 最終ワード受信時 | 1 クロック幅のパルス | 波形アサーションで load_done_o のアサート期間がちょうど 1 サイクルであることを確認 |
+| IO-07 | unload 2048bit | 正常系 | unload_en_i, N=64 | data_o が 64 ワード出力、unload_done が最終 | Python生成の期待データ列と DUT data_o を bit-exact比較。unload_done のタイミングを波形確認 |
+| IO-08 | unload 1024bit | 正常系 | unload_en_i, N=32 | 32 ワード出力 | Python参照と DUT data_o を bit-exact比較 |
+| IO-09 | Valid/Ready ハンドシェイク | プロトコル | ready_o=0 中は word_cnt 変化なし | Valid/Ready 成立サイクルのみカウント進行 | 波形アサーションで ready_o=0 期間中 word_cnt が変化しないことを確認 |
+| IO-10 | ready_i バックプレッシャ | プロトコル | unload 中 ready_i=0 期間 | valid_o と data_o が保持され、カウンタ停止 | 波形アサーションで ready_i=0 期間中 valid_o と data_o が保持されることを確認 |
+| IO-11 | 連続パラメータロード | 機能 | param1 → param2 を連続投入 | 各パラメータで load_done が 1 回、領域が干渉しない | 各パラメータのアドレス領域に対して Python参照と mem_addr_o / mem_wdata_o を bit-exact比較 |
+| IO-12 | リセット中の load_en 無視 | 異常系 | rst_n=0 中 load_en_i | mem_we_o が立たない | 波形アサーションで rst_n=0 期間中 mem_we_o=0 を確認（違反時 `$fatal`） |
+| IO-13 | 不正 addr_i（予約値） | 異常系 | ParamBase〜ParamBasQ 以外を投入 | 書き込み抑止 or 仕様通りのデフォルト動作（設計確認） | 波形で mem_we_o が立たないことを確認（または実装に準じた挙動を波形確認） |
+| IO-14 | load_en と unload_en の同時アサートなし | プロトコル | 設計上禁止、アサート違反時の挙動 | StIoIdle が優先される（実装確認） | 波形アサーションで同時アサート時に StIoIdle 優先であることを確認 |
 
 **合否判定:** mem_addr_o / mem_wdata_o / data_o / load_done_o / unload_done_o の波形が
 参照シーケンスと bit-exact 一致。
@@ -272,16 +295,16 @@ MM-13〜MM-16 は波形アサーションで検出。
 
 **参照モデル:** Python の 1024 要素配列（初期 0）を Port A / Port B の操作で更新する動作モデル。
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| MEM-01 | Port A 単独ライト→リード | 正常系 | a_we_i でアドレス書込 → リード | 書いた値がリードで返る |
-| MEM-02 | Port B 単独ライト→リード | 正常系 | b_we_i でアドレス書込 → リード | 書いた値がリードで返る |
-| MEM-03 | 読み出しレイテンシ | タイミング | リード要求 → rdata 確定 | BRAM ネイティブのレイテンシ（1 クロック）と一致 |
-| MEM-04 | Port A/B 異アドレス同時アクセス | 正常系 | 同サイクルで別アドレスに A ライト / B ライト | 各アドレスが独立に更新 |
-| MEM-05 | Port A/B 同アドレス同時リード | 正常系 | 同サイクルで両ポートから同一アドレス読み | 両 rdata が同じ値 |
-| MEM-06 | Port A/B 同アドレス同時ライト競合 | 異常系 | 設計上禁止（rsa_top FSM で保証） | テストでは発生しないことを確認（アサーション） |
-| MEM-07 | 境界アドレス | 境界値 | addr=0 / addr=Depth-1 | 正常アクセス |
-| MEM-08 | リセット後の内容 | 機能 | rst_n 解除直後のリード | BRAM 初期化仕様に従う（通常は不定、検証対象外）|
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| MEM-01 | Port A 単独ライト→リード | 正常系 | a_we_i でアドレス書込 → リード | 書いた値がリードで返る | Python配列モデルのリード値と DUT a_rdata_o を bit-exact比較 |
+| MEM-02 | Port B 単独ライト→リード | 正常系 | b_we_i でアドレス書込 → リード | 書いた値がリードで返る | Python配列モデルのリード値と DUT b_rdata_o を bit-exact比較 |
+| MEM-03 | 読み出しレイテンシ | タイミング | リード要求 → rdata 確定 | BRAM ネイティブのレイテンシ（1 クロック）と一致 | サイクルカウントでリード要求の 1 サイクル後に rdata が確定することを波形確認 |
+| MEM-04 | Port A/B 異アドレス同時アクセス | 正常系 | 同サイクルで別アドレスに A ライト / B ライト | 各アドレスが独立に更新 | 各アドレスをそれぞれリードし、Python配列モデルの値と bit-exact比較 |
+| MEM-05 | Port A/B 同アドレス同時リード | 正常系 | 同サイクルで両ポートから同一アドレス読み | 両 rdata が同じ値 | a_rdata_o と b_rdata_o が一致することを波形アサーションで確認 |
+| MEM-06 | Port A/B 同アドレス同時ライト競合 | 異常系 | 設計上禁止（rsa_top FSM で保証） | テストでは発生しないことを確認（アサーション） | 波形アサーションで `a_we && b_we && (a_addr == b_addr)` が発生しないことを確認（発生時 `$fatal`） |
+| MEM-07 | 境界アドレス | 境界値 | addr=0 / addr=Depth-1 | 正常アクセス | Python配列モデルと DUT rdata を bit-exact比較 |
+| MEM-08 | リセット後の内容 | 機能 | rst_n 解除直後のリード | BRAM 初期化仕様に従う（通常は不定、検証対象外）| 波形確認（X/Z 伝播がないことを目視確認） |
 
 **合否判定:** MEM-01〜MEM-05, MEM-07 はリードデータの bit-exact 一致。
 MEM-06 は SystemVerilog アサーションで検出（発火しないこと）。
@@ -299,20 +322,20 @@ def crt_decrypt(c, p, q, dp, dq, qinv):
     return m2 + h * q
 ```
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| CRT-01 | 基本 CRT 復号 | 正常系 | NIST 鍵 3 種での復号 | `pow(c, d, n)` と一致 |
-| CRT-02 | CRT 署名 | 正常系 | NIST 鍵での署名 | `pow(m, d, n)` と一致 |
-| CRT-03 | m1 < m2（負補正あり） | 境界値 | m1 - m2 < 0 となるケース | `+p` 補正が働き、正しく h が得られる |
-| CRT-04 | m1 ≥ m2（負補正なし） | 境界値 | 補正不要なケース | 補正せず正しく動作 |
-| CRT-05 | h = 0（m1 == m2） | 境界値 | 稀だが数学的に成立するケース | result = m2 |
-| CRT-06 | ExpP / ExpQ の n_prime 切替 | 機能 | use_nq_prime_o の波形 | ExpP で 0、ExpQ で 1 |
-| CRT-07 | MulQinv の 2 回 MontMul | 機能 | mont_start_o のアサート回数 | ちょうど 2 回 |
-| CRT-08 | StCrtMulHQ の mul_add_unit 駆動 | 機能 | h×q ワード単位乗算の結果 | 1024×1024→2048bit の schoolbook 参照値と一致 |
-| CRT-09 | StCrtAddM2 の 2048bit 加算 | 機能 | result = m2 + h*q | 2048bit 内でオーバーフローしない（数学的に保証）ことを確認 |
-| CRT-10 | 状態遷移順序 | プロトコル | FSM の状態トレース | 設計仕様の遷移順どおり |
-| CRT-11 | mod_exp 完了待ちの排他性 | プロトコル | ExpPWait 中に mont_start_o が出ない | 直接駆動と mod_exp 経由の競合がない |
-| CRT-12 | リセット中断耐性 | 異常系 | 演算中 rst_n=0 | 再開時に正常動作 |
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| CRT-01 | 基本 CRT 復号 | 正常系 | NIST 鍵 3 種での復号 | `pow(c, d, n)` と一致 | Python `crt_decrypt()` と DUT 最終出力を bit-exact比較 |
+| CRT-02 | CRT 署名 | 正常系 | NIST 鍵での署名 | `pow(m, d, n)` と一致 | Python参照と DUT 最終出力を bit-exact比較 |
+| CRT-03 | m1 < m2（負補正あり） | 境界値 | m1 - m2 < 0 となるケース | `+p` 補正が働き、正しく h が得られる | Python参照と DUT 最終出力を bit-exact比較。波形で内部補正加算パスが通ることを確認 |
+| CRT-04 | m1 ≥ m2（負補正なし） | 境界値 | 補正不要なケース | 補正せず正しく動作 | Python参照と DUT 最終出力を bit-exact比較。波形で補正加算パスが通らないことを確認 |
+| CRT-05 | h = 0（m1 == m2） | 境界値 | 稀だが数学的に成立するケース | result = m2 | Python参照（result = m2）と DUT 最終出力を bit-exact比較 |
+| CRT-06 | ExpP / ExpQ の n_prime 切替 | 機能 | use_nq_prime_o の波形 | ExpP で 0、ExpQ で 1 | 波形アサーションで FSM 状態 StExpP 中に use_nq_prime_o=0、StExpQ 中に=1 を確認 |
+| CRT-07 | MulQinv の 2 回 MontMul | 機能 | mont_start_o のアサート回数 | ちょうど 2 回 | 波形で MulQinv ステート中の mont_start_o アサート回数をカウントし、2 と一致することを `$display` で確認 |
+| CRT-08 | StCrtMulHQ の mul_add_unit 駆動 | 機能 | h×q ワード単位乗算の結果 | 1024×1024→2048bit の schoolbook 参照値と一致 | Python参照（h×q の 2048bit 積）と DUT の対応出力信号を bit-exact比較 |
+| CRT-09 | StCrtAddM2 の 2048bit 加算 | 機能 | result = m2 + h*q | 2048bit 内でオーバーフローしない（数学的に保証）ことを確認 | Python参照と DUT 最終出力を bit-exact比較。波形アサーションで result が 2048bit に収まることを確認 |
+| CRT-10 | 状態遷移順序 | プロトコル | FSM の状態トレース | 設計仕様の遷移順どおり | 波形で state_q の遷移が設計仕様 §X の順序と一致することを確認 |
+| CRT-11 | mod_exp 完了待ちの排他性 | プロトコル | ExpPWait 中に mont_start_o が出ない | 直接駆動と mod_exp 経由の競合がない | 波形アサーションで StExpPWait 中に mont_start_o=0 であることを確認（違反時 `$fatal`） |
+| CRT-12 | リセット中断耐性 | 異常系 | 演算中 rst_n=0 | 再開時に正常動作 | リセット後に再実行し、Python参照と DUT 最終出力を bit-exact比較 |
 
 **合否判定:** CRT-01〜CRT-05 は最終結果の bit-exact 一致。CRT-06〜CRT-11 は波形トレース比較。
 
@@ -322,24 +345,24 @@ def crt_decrypt(c, p, q, dp, dq, qinv):
 
 **参照モデル:** Python の `cryptography` / `pycryptodome` による RSA 暗号化・復号・署名・検証。
 
-| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 |
-|---|---|---|---|---|
-| TOP-01 | 暗号化（mode=0） | 正常系 | NIST 鍵の `c = m^e mod n`（3 ケース） | 参照 c と一致 |
-| TOP-02 | 検証（mode=0） | 正常系 | `m = s^e mod n`（3 ケース） | 参照 m と一致 |
-| TOP-03 | 復号（mode=1, CRT） | 正常系 | `m = c^d mod n`（3 ケース） | 参照 m と一致 |
-| TOP-04 | 署名（mode=1, CRT） | 正常系 | `s = m^d mod n`（3 ケース） | 参照 s と一致 |
-| TOP-05 | 復号 → 暗号化の往復 | 機能 | `Dec(Enc(m)) == m` | 一致 |
-| TOP-06 | 署名 → 検証の往復 | 機能 | `Ver(Sign(m)) == m` | 一致 |
-| TOP-07 | 連続 2 回演算 | 機能 | busy_o=0 を確認してから次の start_i | 2 回とも正しく完了 |
-| TOP-08 | mode 切替（0→1→0） | 機能 | 公開→CRT→公開 の連続 | 各回とも正しく完了 |
-| TOP-09 | パラメータロード順不同 | 機能 | base, exp, n, R^2 の順序を入れ替え | どの順でも正しくロード |
-| TOP-10 | 不足パラメータでの start | 異常系 | 必要パラメータ未ロードで start_i | 仕様どおりの挙動（エラー or 未定義動作の明示） |
-| TOP-11 | busy_o 期間の start_i 無視 | 異常系 | busy_o=1 中に start_i | 2 回目の start は無視される |
-| TOP-12 | ready_i バックプレッシャ | プロトコル | unload 中 ready_i を長期 Low | データ保持、最終的に全ワード出力完了 |
-| TOP-13 | 性能（e=65537, 公開鍵） | 性能 | 暗号化 1 回の所要サイクル | 設計想定（~811K サイクル）±10% |
-| TOP-14 | 性能（CRT 復号） | 性能 | 復号 1 回の所要サイクル | 設計想定（~28.5M サイクル）±10% |
-| TOP-15 | リセットからのコールドスタート | 機能 | rst_n 解除直後に通常シーケンス | 正常動作 |
-| TOP-16 | OpenSSL 互換性 | 正常系 | OpenSSL 生成の暗号文を復号 | 平文が一致 |
+| ID | 検証項目 | 種別 | 入力 / 条件 | 期待出力 | 検証方法 |
+|---|---|---|---|---|---|
+| TOP-01 | 暗号化（mode=0） | 正常系 | NIST 鍵の `c = m^e mod n`（3 ケース） | 参照 c と一致 | Python参照と DUT 出力を bit-exact比較 |
+| TOP-02 | 検証（mode=0） | 正常系 | `m = s^e mod n`（3 ケース） | 参照 m と一致 | Python参照と DUT 出力を bit-exact比較 |
+| TOP-03 | 復号（mode=1, CRT） | 正常系 | `m = c^d mod n`（3 ケース） | 参照 m と一致 | Python参照と DUT 出力を bit-exact比較 |
+| TOP-04 | 署名（mode=1, CRT） | 正常系 | `s = m^d mod n`（3 ケース） | 参照 s と一致 | Python参照と DUT 出力を bit-exact比較 |
+| TOP-05 | 復号 → 暗号化の往復 | 機能 | `Dec(Enc(m)) == m` | 一致 | DUT の復号出力と元の平文 m を bit-exact比較 |
+| TOP-06 | 署名 → 検証の往復 | 機能 | `Ver(Sign(m)) == m` | 一致 | DUT の検証出力と元のメッセージ m を bit-exact比較 |
+| TOP-07 | 連続 2 回演算 | 機能 | busy_o=0 を確認してから次の start_i | 2 回とも正しく完了 | 2 回とも Python参照と DUT 出力を bit-exact比較 |
+| TOP-08 | mode 切替（0→1→0） | 機能 | 公開→CRT→公開 の連続 | 各回とも正しく完了 | 各回 Python参照と DUT 出力を bit-exact比較 |
+| TOP-09 | パラメータロード順不同 | 機能 | base, exp, n, R^2 の順序を入れ替え | どの順でも正しくロード | 複数の順序パターンで Python参照と DUT 出力を bit-exact比較 |
+| TOP-10 | 不足パラメータでの start | 異常系 | 必要パラメータ未ロードで start_i | 仕様どおりの挙動（エラー or 未定義動作の明示） | 波形確認（動作が仕様どおりであることを確認。エラー出力があれば波形アサーションで確認） |
+| TOP-11 | busy_o 期間の start_i 無視 | 異常系 | busy_o=1 中に start_i | 2 回目の start は無視される | 波形アサーションで busy_o=1 中の追加 start_i が FSM 状態遷移を引き起こさないことを確認 |
+| TOP-12 | ready_i バックプレッシャ | プロトコル | unload 中 ready_i を長期 Low | データ保持、最終的に全ワード出力完了 | バックプレッシャ解除後に全ワードが Python参照と bit-exact一致で出力されることを確認 |
+| TOP-13 | 性能（e=65537, 公開鍵） | 性能 | 暗号化 1 回の所要サイクル | 設計想定（~811K サイクル）±10% | サイクルカウント（start_i〜done_o 間）を計測し、729,900〜892,100 の範囲内であることを確認 |
+| TOP-14 | 性能（CRT 復号） | 性能 | 復号 1 回の所要サイクル | 設計想定（~28.5M サイクル）±10% | サイクルカウントを計測し、25,650,000〜31,350,000 の範囲内であることを確認 |
+| TOP-15 | リセットからのコールドスタート | 機能 | rst_n 解除直後に通常シーケンス | 正常動作 | Python参照と DUT 出力を bit-exact比較 |
+| TOP-16 | OpenSSL 互換性 | 正常系 | OpenSSL 生成の暗号文を復号 | 平文が一致 | OpenSSL で復号した平文と DUT 出力を bit-exact比較 |
 
 **合否判定:** TOP-01〜TOP-06, TOP-16 は最終結果の bit-exact 一致。
 TOP-13, TOP-14 はサイクル数範囲判定。その他は波形／プロトコル確認。
