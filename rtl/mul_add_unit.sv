@@ -35,7 +35,7 @@ module mul_add_unit #(
   logic [2*HALF-1:0]  dsp_p;  // 16x16 = 32-bit result
 
   // DSP multiplication (combinational — maps to DSP48E1 on real device)
-  assign dsp_p = {{(2*HALF-2*HALF){1'b0}}} | (dsp_a * dsp_b);
+  assign dsp_p = dsp_a * dsp_b;
 
   // DSP input multiplexer
   always_comb begin
