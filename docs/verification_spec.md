@@ -1,9 +1,9 @@
 # RSA-2048 IP 検証仕様書
 
 **作成日**: 2026年4月18日
-**更新日**: 2026年4月26日
+**更新日**: 2026年4月29日
 **作成者**: a2zime × Claude Code
-**バージョン**: 1.4
+**バージョン**: 1.5
 **前提ドキュメント**:
 - [要求仕様書](requirements.md)
 - [設計仕様書](design_spec.md)
@@ -19,6 +19,7 @@
 | 1.2 | 2026-04-28 | §5.2 に最終条件付き減算の説明を追加・MM-08/09 の項目名を明確化。§7.1 の CRT フェーズ網羅とステートカバレッジの関係を明記。§7.2 のカバレッジ目標値に根拠を追記。（Issue #10 追加対応） |
 | 1.3 | 2026-04-28 | §7.2 コードカバレッジを「将来目標」から「Step 5 の完了条件」に格上げし、計測コマンドを追記。 |
 | 1.4 | 2026-04-28 | §2.2 を新設し、Icarus Verilog と Verilator の使い分けを検証フェーズ・目的別に明記。（Issue #10 追加対応） |
+| 1.5 | 2026-04-29 | §5.1 MAU-05 期待値の誤植を修正（0xFFFF_FFFE_0000_0000 → 0xFFFF_FFFF_0000_0000）。（Issue #13 対応） |
 
 ---
 
@@ -206,7 +207,7 @@ Python で実装した参照モデルを唯一の正解源（golden model）と�
 | MAU-02 | 基本動作（積和） | 正常系 | ランダム a, b, c（100 ケース） | `(a*b+c) & 2^64-1` | 全 100 ケースで Python参照と DUT result_o を bit-exact比較 |
 | MAU-03 | ゼロ入力（a=0） | 境界値 | a=0, b=任意, c=任意 | result_o = c（a×b = 0 のため乗算項が消え加算項のみ残る） | Python `(0*b+c) & (2**64-1)` と DUT result_o を bit-exact比較。期待値が c そのものであることを確認 |
 | MAU-04 | ゼロ入力（b=0） | 境界値 | a=任意, b=0, c=任意 | result_o = c（a×b = 0 のため乗算項が消え加算項のみ残る） | Python `(a*0+c) & (2**64-1)` と DUT result_o を bit-exact比較。期待値が c そのものであることを確認 |
-| MAU-05 | 全ビット最大入力 | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | 0xFFFF_FFFE_0000_0000 | Python参照と DUT result_o を bit-exact比較 |
+| MAU-05 | 全ビット最大入力 | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | 0xFFFF_FFFF_0000_0000 | Python参照と DUT result_o を bit-exact比較 |
 | MAU-06 | 桁上がり最大（64bit 収まり確認） | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | オーバーフローせず 64bit 以内に収まること | result_o が 64bit 幅に収まること（Python参照と bit-exact比較で自動的に確認）。波形アサーションで result_o[63:0] に X/Z が出ないことも確認 |
 | MAU-07 | 5 サイクルレイテンシ | タイミング | start_i アサートから done_o アサートまでのクロック数 | ちょうど 5 クロック | テストベンチで start_i アサートサイクルを起点にカウンタを起動し、done_o がアサートされたサイクルのカウント値が 5 と一致することを `$display` で出力・確認。不一致の場合は `$fatal` で終了 |
 | MAU-08 | 連続実行 | 正常系 | done_o アサート後、次サイクルで再び start_i | 各回の result_o が参照値と一致 | 連続 N 回実行し、各回 Python参照と DUT result_o を bit-exact比較 |
