@@ -13,7 +13,7 @@
 | モジュール | テストベンチ | 検証項目 | チェック数 | 結果 |
 |---|---|---|---|---|
 | `mul_add_unit` | `tb/tb_mul_add_unit.sv` | MAU-01〜09（MAU-10 は対象外） | 132 / 132 | ✅ PASSED |
-| `operand_mem` | `tb/tb_operand_mem.sv` | MEM-01〜08 | 27 / 27 | ✅ PASSED |
+| `operand_mem` | `tb/tb_operand_mem.sv` | MEM-01〜09 | 32 / 32 | ✅ PASSED |
 | `mont_mul` | — | MM-01〜16 | — | ⏳ 未着手 |
 | `mod_exp` | — | ME-01〜16 | — | ⏳ 未着手 |
 | `io_controller` | — | IO-01〜14 | — | ⏳ 未着手 |
@@ -68,7 +68,7 @@ vvp sim_mem.out
 ```
 INFO MEM-08     uninit read addr=999 rdata=0xxxxxxxxx  (X expected in simulation)
 
-TEST PASSED  27 / 27 checks
+TEST PASSED  32 / 32 checks
 ```
 
 ### MEM-01〜08 詳細
@@ -81,10 +81,11 @@ TEST PASSED  27 / 27 checks
 | MEM-04 | Port A/B 異アドレス同時アクセス | 正常系 | 10 | ✅ PASS | 同一サイクルで Port A (addr=300+i) と Port B (addr=400+i) に同時ライト（5回）。それぞれ `0xAAAA_000x` / `0xBBBB_000x` を書込み、独立してリードで bit-exact 一致を確認。A/B 各5ケース=計10チェック |
 | MEM-05 | Port A/B 同アドレス同時リード | 正常系 | 3 | ✅ PASS | addr=500/501/502 に Port A で書込後、両ポートから同一アドレスを同一サイクルでリード。`a_rdata_o === b_rdata_o` を3アドレス分確認 |
 | MEM-06 | Port A/B 同アドレス同時ライト競合 | 異常系 | — | ✅ 違反なし | `always_ff` アサーションで `a_we && b_we && (a_addr == b_addr)` を監視。本テスト中に競合は一度も発生せず（`$fatal` 未発火）。MEM-04 では意図的に異アドレスを使用 |
-| MEM-07 | 境界アドレス | 境界値 | 3 | ✅ PASS | `addr=0`（Port A）、`addr=1023`（Port A）、`addr=1023`（Port B）の3ケースを書込・リードして bit-exact 一致を確認。Port A・Port B 両方で上限アドレスへのアクセスを検証 |
+| MEM-07 | 境界アドレス | 境界値 | 4 | ✅ PASS | Port A × addr=0、Port A × addr=1023、Port B × addr=0、Port B × addr=1023 の 4 ケースを書込・リードして bit-exact 一致を確認 |
 | MEM-08 | リセット後の内容 | 機能 | — | ℹ️ 情報確認 | 未書込の `addr=999` をリード。シミュレーション出力 `rdata=0xxxxxxxxx`。BRAM はリセット非対象のため X は仕様通り。合否判定対象外 |
+| MEM-09 | 境界アドレス連続アクセス（折り返し） | 境界値 | 4 | ✅ PASS | Port A で addr=1023 書込→addr=0 書込後、1023→0 の順でリードして各値が一致することを確認。Port B でも同様に実施。アドレス間の値汚染なし |
 
-**チェック数内訳:** MEM-01(5) + MEM-02(5) + MEM-03(1) + MEM-04(10) + MEM-05(3) + MEM-06(アサーション) + MEM-07(3) + MEM-08(情報) = **27**
+**チェック数内訳:** MEM-01(5) + MEM-02(5) + MEM-03(1) + MEM-04(10) + MEM-05(3) + MEM-06(アサーション) + MEM-07(4) + MEM-08(情報) + MEM-09(4) = **32**
 
 ---
 

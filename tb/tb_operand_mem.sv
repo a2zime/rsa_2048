@@ -226,12 +226,30 @@ module tb_operand_mem;
     end
 
     // ==================================================================
-    // MEM-07: Boundary addresses (addr=0, addr=Depth-1=1023)
-    //   Both Port A and Port B are verified at addr=1023.
+    // MEM-07: Boundary addresses — both ports at both boundary addresses
+    //   Port A: addr=0, addr=1023
+    //   Port B: addr=0, addr=1023
     // ==================================================================
-    write_a(10'd0,    32'hBEEF_0000); read_a(10'd0,    rdata); check32(rdata, 32'hBEEF_0000, "MEM-07-A-lo");
+    write_a(10'd0,    32'hBEEF_A000); read_a(10'd0,    rdata); check32(rdata, 32'hBEEF_A000, "MEM-07-A-lo");
     write_a(10'd1023, 32'hBEEF_A3FF); read_a(10'd1023, rdata); check32(rdata, 32'hBEEF_A3FF, "MEM-07-A-hi");
+    write_b(10'd0,    32'hBEEF_B000); read_b(10'd0,    rdata); check32(rdata, 32'hBEEF_B000, "MEM-07-B-lo");
     write_b(10'd1023, 32'hBEEF_B3FF); read_b(10'd1023, rdata); check32(rdata, 32'hBEEF_B3FF, "MEM-07-B-hi");
+
+    // ==================================================================
+    // MEM-09: Boundary wraparound — addr=1023 write immediately followed by addr=0 write,
+    //   then read both back in 1023→0 order to verify no cross-address contamination.
+    //   Performed on both Port A and Port B.
+    // ==================================================================
+    // Port A
+    write_a(10'd1023, 32'hFACE_A3FF);
+    write_a(10'd0,    32'hFACE_A000);
+    read_a(10'd1023, rdata); check32(rdata, 32'hFACE_A3FF, "MEM-09-A-1023");
+    read_a(10'd0,    rdata); check32(rdata, 32'hFACE_A000, "MEM-09-A-0000");
+    // Port B
+    write_b(10'd1023, 32'hFACE_B3FF);
+    write_b(10'd0,    32'hFACE_B000);
+    read_b(10'd1023, rdata); check32(rdata, 32'hFACE_B3FF, "MEM-09-B-1023");
+    read_b(10'd0,    rdata); check32(rdata, 32'hFACE_B000, "MEM-09-B-0000");
 
     // ==================================================================
     // MEM-08: Post-reset content (informational — BRAM not reset)
