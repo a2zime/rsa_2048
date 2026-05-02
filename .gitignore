@@ -1,5 +1,5 @@
-# Private local rules (not tracked)
-private/private.md
+# Private local files (not tracked)
+private/
 
 # Simulation outputs
 *.vcd
