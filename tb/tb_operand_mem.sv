@@ -227,9 +227,11 @@ module tb_operand_mem;
 
     // ==================================================================
     // MEM-07: Boundary addresses (addr=0, addr=Depth-1=1023)
+    //   Both Port A and Port B are verified at addr=1023.
     // ==================================================================
-    write_a(10'd0,    32'hBEEF_0000); read_a(10'd0,    rdata); check32(rdata, 32'hBEEF_0000, "MEM-07-lo");
-    write_b(10'd1023, 32'hBEEF_03FF); read_b(10'd1023, rdata); check32(rdata, 32'hBEEF_03FF, "MEM-07-hi");
+    write_a(10'd0,    32'hBEEF_0000); read_a(10'd0,    rdata); check32(rdata, 32'hBEEF_0000, "MEM-07-A-lo");
+    write_a(10'd1023, 32'hBEEF_A3FF); read_a(10'd1023, rdata); check32(rdata, 32'hBEEF_A3FF, "MEM-07-A-hi");
+    write_b(10'd1023, 32'hBEEF_B3FF); read_b(10'd1023, rdata); check32(rdata, 32'hBEEF_B3FF, "MEM-07-B-hi");
 
     // ==================================================================
     // MEM-08: Post-reset content (informational — BRAM not reset)
