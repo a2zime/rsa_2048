@@ -1,9 +1,9 @@
 # RSA-2048 IP 検証仕様書
 
 **作成日**: 2026年4月18日
-**更新日**: 2026年4月26日
+**更新日**: 2026年5月2日
 **作成者**: a2zime × Claude Code
-**バージョン**: 1.4
+**バージョン**: 1.6
 **前提ドキュメント**:
 - [要求仕様書](requirements.md)
 - [設計仕様書](design_spec.md)
@@ -19,6 +19,8 @@
 | 1.2 | 2026-04-28 | §5.2 に最終条件付き減算の説明を追加・MM-08/09 の項目名を明確化。§7.1 の CRT フェーズ網羅とステートカバレッジの関係を明記。§7.2 のカバレッジ目標値に根拠を追記。（Issue #10 追加対応） |
 | 1.3 | 2026-04-28 | §7.2 コードカバレッジを「将来目標」から「Step 5 の完了条件」に格上げし、計測コマンドを追記。 |
 | 1.4 | 2026-04-28 | §2.2 を新設し、Icarus Verilog と Verilator の使い分けを検証フェーズ・目的別に明記。（Issue #10 追加対応） |
+| 1.5 | 2026-04-29 | §5.1 MAU-05 期待値の誤植を修正（0xFFFF_FFFE_0000_0000 → 0xFFFF_FFFF_0000_0000）。（Issue #13 対応） |
+| 1.6 | 2026-05-02 | §5.5 MEM-07 を Port A・Port B × addr=0・1023 の 4 ケースに拡充。MEM-09（境界アドレス連続アクセス折り返し）を新規追加。 |
 
 ---
 
@@ -206,7 +208,7 @@ Python で実装した参照モデルを唯一の正解源（golden model）と�
 | MAU-02 | 基本動作（積和） | 正常系 | ランダム a, b, c（100 ケース） | `(a*b+c) & 2^64-1` | 全 100 ケースで Python参照と DUT result_o を bit-exact比較 |
 | MAU-03 | ゼロ入力（a=0） | 境界値 | a=0, b=任意, c=任意 | result_o = c（a×b = 0 のため乗算項が消え加算項のみ残る） | Python `(0*b+c) & (2**64-1)` と DUT result_o を bit-exact比較。期待値が c そのものであることを確認 |
 | MAU-04 | ゼロ入力（b=0） | 境界値 | a=任意, b=0, c=任意 | result_o = c（a×b = 0 のため乗算項が消え加算項のみ残る） | Python `(a*0+c) & (2**64-1)` と DUT result_o を bit-exact比較。期待値が c そのものであることを確認 |
-| MAU-05 | 全ビット最大入力 | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | 0xFFFF_FFFE_0000_0000 | Python参照と DUT result_o を bit-exact比較 |
+| MAU-05 | 全ビット最大入力 | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | 0xFFFF_FFFF_0000_0000 | Python参照と DUT result_o を bit-exact比較 |
 | MAU-06 | 桁上がり最大（64bit 収まり確認） | 境界値 | a=0xFFFF_FFFF, b=0xFFFF_FFFF, c=0xFFFF_FFFF | オーバーフローせず 64bit 以内に収まること | result_o が 64bit 幅に収まること（Python参照と bit-exact比較で自動的に確認）。波形アサーションで result_o[63:0] に X/Z が出ないことも確認 |
 | MAU-07 | 5 サイクルレイテンシ | タイミング | start_i アサートから done_o アサートまでのクロック数 | ちょうど 5 クロック | テストベンチで start_i アサートサイクルを起点にカウンタを起動し、done_o がアサートされたサイクルのカウント値が 5 と一致することを `$display` で出力・確認。不一致の場合は `$fatal` で終了 |
 | MAU-08 | 連続実行 | 正常系 | done_o アサート後、次サイクルで再び start_i | 各回の result_o が参照値と一致 | 連続 N 回実行し、各回 Python参照と DUT result_o を bit-exact比較 |
@@ -330,10 +332,11 @@ MM-13〜MM-16 は波形アサーションで検出。
 | MEM-04 | Port A/B 異アドレス同時アクセス | 正常系 | 同サイクルで別アドレスに A ライト / B ライト | 各アドレスが独立に更新 | 各アドレスをそれぞれリードし、Python配列モデルの値と bit-exact比較 |
 | MEM-05 | Port A/B 同アドレス同時リード | 正常系 | 同サイクルで両ポートから同一アドレス読み | 両 rdata が同じ値 | a_rdata_o と b_rdata_o が一致することを波形アサーションで確認 |
 | MEM-06 | Port A/B 同アドレス同時ライト競合 | 異常系 | 設計上禁止（rsa_top FSM で保証） | テストでは発生しないことを確認（アサーション） | 波形アサーションで `a_we && b_we && (a_addr == b_addr)` が発生しないことを確認（発生時 `$fatal`） |
-| MEM-07 | 境界アドレス | 境界値 | addr=0 / addr=Depth-1 | 正常アクセス | Python配列モデルと DUT rdata を bit-exact比較 |
+| MEM-07 | 境界アドレス | 境界値 | addr=0 / addr=Depth-1 を Port A・Port B の両方でアクセス（計 4 ケース） | 正常アクセス | Python配列モデルと DUT rdata を bit-exact比較 |
 | MEM-08 | リセット後の内容 | 機能 | rst_n 解除直後のリード | BRAM 初期化仕様に従う（通常は不定、検証対象外）| 波形確認（X/Z 伝播がないことを目視確認） |
+| MEM-09 | 境界アドレス連続アクセス（折り返し） | 境界値 | addr=1023 書込直後に addr=0 書込、その後 1023→0 の順でリード（Port A・Port B 各 1 回） | 各アドレスに書いた値がそれぞれリードで返る（アドレス間の汚染なし） | 1023 と 0 のリード値をそれぞれ Python配列モデルと bit-exact比較 |
 
-**合否判定:** MEM-01〜MEM-05, MEM-07 はリードデータの bit-exact 一致。
+**合否判定:** MEM-01〜MEM-05, MEM-07, MEM-09 はリードデータの bit-exact 一致。
 MEM-06 は SystemVerilog アサーションで検出（発火しないこと）。
 
 ---

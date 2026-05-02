@@ -1,0 +1,7 @@
+# mul_add_unit vectors (seed=0xa2212048, 112 cases)
+SHA256(mau_tv_a.hex): 3ff63e3dddea48479ec20e7fa83f903c16179b167b2789fb9137878c2e88bf30
+SHA256(mau_tv_b.hex): 43df6c62d1bc632b3fc7fe8fc9ea0dea6e63a0caae2421ef43b91c62535a34e5
+SHA256(mau_tv_c.hex): 24e9ef3bd510d9347bad9ce0344d56c382397c517204017f0b6fdf72e89f4b19
+SHA256(mau_tv_exp_lo.hex): ee348b8e2be196db4e65e3874a4e4426330062ea0ffd23b42793f6c697dae675
+SHA256(mau_tv_exp_hi.hex): c8091a9f51deb24a48304537cbf1fcfdd65e13396630ea5356bf8a5fee23560c
+

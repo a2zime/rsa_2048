@@ -5,6 +5,9 @@ private/private.md
 *.vcd
 *.out
 *.log
+obj_dir/
+coverage.dat
+coverage_annotated/
 
 # OS
 .DS_Store
