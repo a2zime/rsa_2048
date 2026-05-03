@@ -44,8 +44,9 @@ module mont_mul #(
     StMontMN0,
     StMontMN0Wait,
     StMontInnerLoop,
-    StMontInnerLoopWait,
+    StMontBiRead,        // wait one cycle for B[i] data after OuterInit
     StMontInnerStore,
+    StMontInnerRead,
     StMontOuterEnd,
     StMontFinalSub,
     StMontWriteBack,
@@ -73,6 +74,15 @@ module mont_mul #(
 
   // S register (lower word of multiply-accumulate)
   logic [WordWidth-1:0] s_q, s_d;
+
+  // Carry absorption for inner loop: S_adj = S1 + carry_lo (33-bit)
+  logic [WordWidth:0] inner_s_adj;
+
+  // Carry overflow bit from OuterEnd — feeds into the NEXT outer iteration's carry
+  logic carry_ovfl_q, carry_ovfl_d;
+
+  // Effective carry at OuterEnd: carry_q + carry_ovfl_q (33-bit, fits since carry_q <= 2^33-2)
+  logic [WordWidth:0] carry_eff_outer;
 
   // Memory base addresses (offsets for a, b, n, t)
   logic [9:0] addr_a_base, addr_b_base, addr_n_base, addr_t_base;
@@ -131,26 +141,34 @@ module mont_mul #(
     mem_we_d    = 1'b0;
     mem_addr_d  = '0;
     mem_wdata_d = '0;
-    mul_a_d     = '0;
-    mul_b_d     = '0;
-    mul_c_d     = '0;
-    mul_start_d = 1'b0;
+    mul_a_d       = '0;
+    mul_b_d       = '0;
+    mul_c_d       = '0;
+    mul_start_d   = 1'b0;
+    inner_s_adj   = '0;
+    carry_ovfl_d  = carry_ovfl_q;
+    carry_eff_outer = '0;
 
     unique case (state_q)
       StMontIdle: begin
         if (start_i) begin
-          i_d     = '0;
-          carry_d = '0;
-          state_d = StMontOuterInit;
+          i_d          = '0;
+          carry_d      = '0;
+          carry_ovfl_d = 1'b0;  // reset carry overflow at each MontMul start
+          state_d      = StMontOuterInit;
         end
       end
 
-      // Outer loop init: zero-clear t[] (first iteration only), request load of b[i]
+      // Outer loop init: issue B[i] prefetch, then wait one cycle for data
       StMontOuterInit: begin
-        // Request memory read of b[i]
         mem_re_d   = 1'b1;
         mem_addr_d = addr_b_base + {3'b0, i_q};
-        state_d    = StMontLoadBi;
+        state_d    = StMontBiRead;
+      end
+
+      // Wait for B[i] data to appear on mem_rdata_i (1-cycle BRAM latency)
+      StMontBiRead: begin
+        state_d = StMontLoadBi;
       end
 
       // Latch b[i]
@@ -194,8 +212,8 @@ module mont_mul #(
           3'd2: begin
             if (mul_done_i) begin
               // (C,S) = t[0] + a[0]*b[i]
-              s_d     = mul_result_i[WordWidth-1:0];
-              carry_d = {1'b0, mul_result_i[2*WordWidth-1:WordWidth]};
+              s_d     = mul_result_i[31:0];
+              carry_d = {1'b0, mul_result_i[63:32]};
               state_d = StMontComputeM;
             end
           end
@@ -232,7 +250,7 @@ module mont_mul #(
           3'd1: begin
             if (mul_done_i) begin
               // S is 0 (guaranteed by design); accumulate upper word into carry
-              carry_d = carry_q + {1'b0, mul_result_i[2*WordWidth-1:WordWidth]};
+              carry_d = carry_q + {1'b0, mul_result_i[63:32]};
               j_d     = 7'd1;
               // Prepare inner loop: prefetch a[1] and t[1]
               if (num_words > 7'd1) begin
@@ -276,10 +294,15 @@ module mont_mul #(
           end
           3'd3: begin
             if (mul_done_i) begin
-              // (C,S) = t[j] + a[j]*b[i] + carry
-              s_d     = mul_result_i[WordWidth-1:0];
-              carry_d = {1'b0, mul_result_i[2*WordWidth-1:WordWidth]}
-                      + carry_q;
+              // (C,S) = t[j] + a[j]*b[i] + carry_in
+              // Absorb carry_in into S: S_adj = S1 + carry_lo (33-bit)
+              // carry_new = C1 + S_adj[32] + carry_q[32]
+              inner_s_adj = {1'b0, mul_result_i[31:0]}
+                          + {1'b0, carry_q[31:0]};
+              s_d     = inner_s_adj[WordWidth-1:0];
+              carry_d = {1'b0, mul_result_i[63:32]}
+                      + {{32{1'b0}}, inner_s_adj[32]}
+                      + {{32{1'b0}}, carry_q[32]};
               // Prefetch n[j]
               mem_re_d   = 1'b1;
               mem_addr_d = addr_n_base + {3'b0, j_q};
@@ -302,9 +325,9 @@ module mont_mul #(
             if (mul_done_i) begin
               // (C2,S2) = S + m*n[j]
               // carry = C + C2 (accumulated)
-              s_d = mul_result_i[WordWidth-1:0];
+              s_d = mul_result_i[31:0];
               carry_d = carry_q
-                      + {1'b0, mul_result_i[2*WordWidth-1:WordWidth]};
+                      + {1'b0, mul_result_i[63:32]};
               state_d = StMontInnerStore;
             end
           end
@@ -312,10 +335,7 @@ module mont_mul #(
         endcase
       end
 
-      StMontInnerLoopWait: begin
-        // Unused (wait handling is done within StMontInnerLoop)
-        state_d = StMontInnerLoop;
-      end
+      // (StMontBiRead is handled above — replaces the former StMontInnerLoopWait)
 
       // Write t[j-1] = S
       StMontInnerStore: begin
@@ -324,24 +344,33 @@ module mont_mul #(
         mem_wdata_d = s_q;
         j_d         = j_q + 7'd1;
         if (j_q + 7'd1 < num_words) begin
-          // Prefetch next t[j+1]
-          mem_re_d   = 1'b1;
-          // Note: with dual-port BRAM a write and read can be simultaneous,
-          // but since we share one port here, we read in the next cycle
-          inner_sub_d = 3'd0;
-          state_d     = StMontInnerLoop;
+          // Transition to StMontInnerRead to prefetch the correct t[j_new]
+          state_d = StMontInnerRead;
         end else begin
           state_d = StMontOuterEnd;
         end
       end
 
-      // Outer loop tail: t[s-1] = carry
+      // Prefetch t[j_q] for the next inner loop iteration (j_q already incremented in InnerStore)
+      //   This fixes the off-by-two read address bug: InnerStore's write address must NOT
+      //   be reused as the read address for the next T[j].
+      StMontInnerRead: begin
+        mem_re_d    = 1'b1;
+        mem_addr_d  = addr_t_base + {3'b0, j_q};
+        inner_sub_d = 3'd0;
+        state_d     = StMontInnerLoop;
+      end
+
+      // Outer loop tail: t[s-1] = carry_eff (carry + carry_ovfl from previous iteration)
+      //   carry_ovfl_d saves the new overflow bit for the NEXT outer iteration.
       StMontOuterEnd: begin
-        mem_we_d    = 1'b1;
-        mem_addr_d  = addr_t_base + {3'b0, num_words} - 10'd1;
-        mem_wdata_d = carry_q[WordWidth-1:0];
-        i_d         = i_q + 7'd1;
-        carry_d     = '0;
+        carry_eff_outer = carry_q + {32'b0, carry_ovfl_q};
+        mem_we_d     = 1'b1;
+        mem_addr_d   = addr_t_base + {3'b0, num_words} - 10'd1;
+        mem_wdata_d  = carry_eff_outer[WordWidth-1:0];
+        carry_ovfl_d = carry_eff_outer[WordWidth];
+        i_d          = i_q + 7'd1;
+        carry_d      = '0;
         if (i_q + 7'd1 < num_words) begin
           state_d = StMontOuterInit;
         end else begin
@@ -395,8 +424,8 @@ module mont_mul #(
               // borrow is MSB
               sub_idx_d = sub_idx_q + 7'd1;
               if (sub_idx_q + 7'd1 >= num_words) begin
-                // Compare done: if borrow, then t < n -> no subtraction needed
-                if (!borrow_d[WordWidth]) begin
+                // Compare done: if borrow=0 OR carry_ovfl (T >= 2^{s*w}), subtract
+                if (!borrow_d[WordWidth] || carry_ovfl_q) begin
                   // t >= n -> proceed to subtract and write-back phase
                   sub_idx_d   = '0;
                   borrow_d    = '0;
@@ -474,7 +503,8 @@ module mont_mul #(
       mul_a_o     <= '0;
       mul_b_o     <= '0;
       mul_c_o     <= '0;
-      mul_start_o <= 1'b0;
+      mul_start_o  <= 1'b0;
+      carry_ovfl_q <= 1'b0;
     end else begin
       state_q     <= state_d;
       i_q         <= i_d;
@@ -495,7 +525,8 @@ module mont_mul #(
       mul_a_o     <= mul_a_d;
       mul_b_o     <= mul_b_d;
       mul_c_o     <= mul_c_d;
-      mul_start_o <= mul_start_d;
+      mul_start_o  <= mul_start_d;
+      carry_ovfl_q <= carry_ovfl_d;
     end
   end
 
