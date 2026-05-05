@@ -326,10 +326,13 @@ module mod_exp #(
           // MontMul(1, R^2, n) result is in t[]
           // Copy t[] -> ADDR_BASE (used as result)
           // Restore base_mont from ADDR_RESULT back to ADDR_MONT_A
-          // Prepare for exponent bit scan
+          // Prepare for exponent bit scan.
+          //   The first StExpCopyResult (right after InitR) decrements bit_cnt
+          //   via the override block, so seed it with bit_width (not bit_width-1)
+          //   so the first bit actually scanned is bit_width-1 (the MSB).
           copy_cnt_d  = '0;
           setup_sub_d = '0;
-          bit_cnt_d   = bit_width - 12'd1;  // Start from MSB
+          bit_cnt_d   = bit_width;
           prev_exp_word_idx_d = 7'h7F;  // Invalid sentinel value
           state_d     = StExpCopyResult;
         end
@@ -619,10 +622,15 @@ module mod_exp #(
             mem_wdata_d = mem_rdata_i;
             copy_cnt_d  = copy_cnt_q + 7'd1;
             if (copy_cnt_q + 7'd1 >= num_words) begin
-              state_d = StExpIdle;
+              // Extra flush cycle: me_busy must stay 1 so the Port A mux does
+              // not switch away before the last write propagates to BRAM.
+              setup_sub_d = 4'd3;
             end else begin
               setup_sub_d = 4'd0;
             end
+          end
+          4'd3: begin
+            state_d = StExpIdle;
           end
           default: setup_sub_d = 4'd0;
         endcase
@@ -632,13 +640,18 @@ module mod_exp #(
     endcase
 
     // Handle exponent word read completion in StExpScan
+    // Total BRAM read latency = 2 cycles: sub=0 sets mem_addr_d (registered into
+    // mem_addr_o at next posedge), sub=1 is an extra wait, sub=2 captures the data.
     if (state_q == StExpScan && exp_word_idx != prev_exp_word_idx_q) begin
       unique case (setup_sub_q)
         4'd0: begin
-          // Wait for memory read
           setup_sub_d = 4'd1;
         end
         4'd1: begin
+          // Extra wait: mem_rdata_i still holds data from previous address
+          setup_sub_d = 4'd2;
+        end
+        4'd2: begin
           exp_word_d = mem_rdata_i;
           prev_exp_word_idx_d = exp_word_idx;
           copy_cnt_d = '0;
