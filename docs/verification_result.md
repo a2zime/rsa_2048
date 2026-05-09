@@ -1,7 +1,7 @@
 # RSA-2048 IP 検証結果レポート
 
 **作成日**: 2026年5月2日
-**更新日**: 2026年5月6日
+**更新日**: 2026年5月10日
 **作成者**: a2zime × Claude Code
 **対応仕様書**: [verification_spec.md](verification_spec.md) v1.7
 **シミュレータ**: Icarus Verilog (iverilog -g2012)
@@ -17,7 +17,7 @@
 | `operand_mem` | `tb/tb_operand_mem.sv` | MEM-01〜09 | 32 / 32 | ✅ PASSED |
 | `mont_mul` | `tb/tb_mont_mul.sv` | MM-01〜16 | 1832 / 1832 | ✅ PASSED |
 | `mod_exp` | `tb/tb_mod_exp.sv` | ME-01〜16 | 1890 / 1890 | ✅ PASSED |
-| `io_controller` | — | IO-01〜14 | — | ⏳ 未着手 |
+| `io_controller` | `tb/tb_io_controller.sv` | IO-01〜14 | 1988 / 1988 | ✅ PASSED |
 | `crt_controller` | — | CRT-01〜12 | — | ⏳ 未着手 |
 | `rsa_top` | — | TOP-01〜16 | — | ⏳ 未着手 |
 
@@ -197,7 +197,58 @@ TEST PASSED  1890 / 1890 checks
 
 ---
 
-## 6. 発見済みバグ・仕様誤植
+## 6. io_controller 検証結果
+
+**シミュレーション実行コマンド:**
+```
+iverilog -g2012 -o sim_io.out rtl/rsa_pkg.sv rtl/operand_mem.sv rtl/io_controller.sv tb/tb_io_controller.sv
+vvp sim_io.out          # 通常実行（VCDなし）
+vvp sim_io.out +vcd     # デバッグ時のみ VCD 生成
+```
+
+**最終出力:**
+```
+TEST PASSED  1988 / 1988 checks
+```
+
+**テストデータ:** `$urandom`（seed は iverilog 既定）でテスト中に生成。Python 参照モデルは不要（io_controller はアドレッシングのみで値変換を伴わないため、TB 側で期待アドレス/データを直接構築できる）。
+
+**メモリモデル:** 実 RTL の `operand_mem` を TB に組み込み、Port A を DUT が駆動・Port B を TB が backdoor として使用（unload 用 result 領域の事前ロード）。
+
+### IO-01〜14 詳細
+
+| 検証ID | 検証内容 | 種別 | チェック数 | 結果 | 詳細 |
+|---|---|---|---|---|---|
+| IO-01 | 2048bit パラメータロード（ParamBase, 64 ワード） | 正常系 | 129 | ✅ PASS | 各サイクルで `mem_we_o=1`・`mem_addr_o=ADDR_BASE+i`・`mem_wdata_o=data_i[i]`、`load_done_o` パルス1回 |
+| IO-02 | 1024bit パラメータロード（ParamP, 32 ワード） | 正常系 | 65 | ✅ PASS | 32 ワード書込・最終ワードで `load_done_o` を1サイクル |
+| IO-03 | 32bit パラメータロード（ParamNPrime, 1 ワード） | 正常系 | 3 | ✅ PASS | 1 サイクルで `load_done_o` を1パルス |
+| IO-04 | 全 16 ParamID マッピング網羅 | 正常系 | 1110 | ✅ PASS | `param_addr_e` 全 16 値（ParamBase〜ParamBasQ）を順に投入。各 ID のベースアドレス・転送ワード数が `rsa_pkg` 定数と一致 |
+| IO-05 | LSB-first 順序 | 機能 | 129 | ✅ PASS | ParamBase に 64 ワード書込後、Port B 経由で `mem[ADDR_BASE+0]==w0` を確認 |
+| IO-06 | `load_done_o` パルス幅 = 1 サイクル | プロトコル | 129 | ✅ PASS | ParamMod 64 ワード書込中、`load_done_o=1` のサイクル数がちょうど 1 |
+| IO-07 | unload 64 ワード（ADDR_RESULT） | 正常系 | 65 | ✅ PASS | Port B で 64 ワード事前ロード後 unload。`data_o` 列が事前ロード値と bit-exact 一致、`unload_done_o` パルス1回 |
+| IO-08 | unload は addr_i に依らず 64 ワード（実装意図） | 機能 | 65 | ✅ PASS | `addr_i=ParamP` でも 64 ワードを `ADDR_RESULT` から出力（設計仕様 §4.2 に基づく実装意図確認） |
+| IO-09 | `valid_i=0` 期間中は word_cnt 進行しない | プロトコル | 17 | ✅ PASS | StIoLoad 中に `valid_i=0` を 8 サイクル維持。期間中 `mem_we_o=0`・`mem_addr_o` 不変・`load_done_o=0` |
+| IO-10 | `ready_i=0` バックプレッシャ保持 | プロトコル | 14 | ✅ PASS | unload 中に `ready_i=0` を 7 サイクル維持。期間中 `valid_o=1`・`data_o` 不変。再開後 `unload_done_o` 正常パルス |
+| IO-11 | 連続パラメータロード（ParamBase → ParamP） | 機能 | 194 | ✅ PASS | ParamBase 64 ワード後 ParamP 32 ワードを連続投入。両領域の最終ワードが書込値と一致（領域干渉なし） |
+| IO-12 | リセット中の `load_en_i` 無視 | 異常系 | 1 | ✅ PASS | `rst_n=0` 中に `load_en_i=valid_i=1` を 8 サイクル維持。`mem_we_o` は一度も立たず |
+| IO-13 | 全 4bit `addr_i` が有効値（IO-04 で網羅、ParamBasQ 単独確認） | 異常系 | 65 | ✅ PASS | `param_addr_e` 全 16 値が有効。ParamBasQ（4'hF）で 32 ワードロードが正常完了 |
+| IO-14 | `load_en_i` と `unload_en_i` 同時アサート → load 優先 | プロトコル | 2 | ✅ PASS | 両 enable を 1 サイクル同時アサート。`mem_we_o` パルスを観測（load 経路）、`valid_o=0`（unload 経路は engaged せず） |
+
+**チェック数内訳:** IO-01(129) + IO-02(65) + IO-03(3) + IO-04(1110) + IO-05(129) + IO-06(129) + IO-07(65) + IO-08(65) + IO-09(17) + IO-10(14) + IO-11(194) + IO-12(1) + IO-13(65) + IO-14(2) = **1988**
+
+### 発見バグ（io_controller unload パイプライン 1件）
+
+テストベンチ実装中に RTL バグ 1件を発見・修正（Issue #26）。
+
+| Issue | バグ内容 | 症状 |
+|---|---|---|
+| [#26](https://github.com/a2zime/rsa_2048/issues/26) | unload パイプラインで `unload_data_q` が毎サイクル `mem_rdata_i` で上書き、`mem_addr_o` が出力カウンタ `word_cnt_q` で生成されるため BRAM 1cyc レイテンシと整合せず | 最初のワードが 3 回連続出力され末尾 2 ワードが消失 |
+
+**修正方針:** 読み出し用 `read_cnt_q` を出力カウンタから分離し、`mem_re_q`（前サイクル発行フラグ）でスキッド更新を制御。スキッドが空 or 出力受領時のみ次の読み出しを発行することで、in-flight データ取りこぼしを防止。throughput は 1 ワード/2 サイクルになるが、io_controller は外部 I/O 律速のため許容（64 ワード unload で約 130 サイクル）。
+
+---
+
+## 7. 発見済みバグ・仕様誤植
 
 | Issue | 種別 | 内容 | 対応状況 |
 |---|---|---|---|
@@ -211,13 +262,13 @@ TEST PASSED  1890 / 1890 checks
 | [#22](https://github.com/a2zime/rsa_2048/issues/22) | RTL バグ | `rtl/mod_exp.sv` `StExpScan` — 指数ワード読み出しが1サイクル早く誤データをキャプチャ | sub=2 を追加して2サイクルラテンシに合わせる |
 | [#23](https://github.com/a2zime/rsa_2048/issues/23) | RTL バグ | `rtl/mod_exp.sv` `StExpDone` — 最終ワード書込が `me_busy=0` 遷移で Port A mux に遮断 | sub=3（flush）を追加し書込完了まで `me_busy=1` を保持 |
 | [#24](https://github.com/a2zime/rsa_2048/issues/24) | RTL バグ | `rtl/mod_exp.sv` `StExpInitRWait` — `bit_cnt` 初期値が1小さく MSB スキップ | `bit_cnt = bit_width` に変更（`bit_width-1` から） |
+| [#26](https://github.com/a2zime/rsa_2048/issues/26) | RTL バグ | `rtl/io_controller.sv` unload パイプライン — `unload_data_q` 上書き＆出力カウンタによるアドレス生成で BRAM レイテンシと整合せず最初のワードが3回出力 | 読み出しカウンタ `read_cnt_q` 分離・`mem_re_q` ベースのスキッド更新に変更。throughput は 1 word / 2 cycles |
 
 ---
 
-## 7. 未着手モジュールの検証計画
+## 8. 未着手モジュールの検証計画
 
 | モジュール | 検証ID | 概要 | 依存関係 |
 |---|---|---|---|
-| `io_controller` | IO-01〜14 | パラメータロード・アンロード、Valid/Ready | — |
 | `crt_controller` | CRT-01〜12 | CRT 復号フロー全体 | `mod_exp` + `mont_mul` |
 | `rsa_top` | TOP-01〜16 | 統合テスト（暗号化・復号・署名・検証） | 全モジュール |

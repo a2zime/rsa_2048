@@ -41,8 +41,13 @@ module io_controller #(
 
   io_state_e state_d, state_q;
 
-  // Word counter
+  // Word counter (output side: advances on (valid_i & ready_o) for Load,
+  // and on (valid_o & ready_i) for Unload)
   logic [6:0] word_cnt_d, word_cnt_q;
+
+  // Read-address counter for Unload (separate from word_cnt_q so the read
+  // pipeline can lead the output handshake by 1 cycle for BRAM latency)
+  logic [6:0] read_cnt_d, read_cnt_q;
 
   // Number of words to transfer
   logic [6:0] num_xfer_words;
@@ -104,13 +109,18 @@ module io_controller #(
   assign unload_num_words = 7'd64;
 
   // Read pipeline for Unload (handles 1-cycle BRAM read latency)
+  // unload_read_valid_q: skid (unload_data_q) holds an unconsumed word
+  // mem_re_q:            mem_re_o was asserted in the previous cycle
+  //                      (a read fired and its data is on mem_rdata_i now)
   logic unload_read_valid_q;
+  logic mem_re_q;
   logic [WordWidth-1:0] unload_data_q;
 
   // Combinational logic
   always_comb begin
     state_d    = state_q;
     word_cnt_d = word_cnt_q;
+    read_cnt_d = read_cnt_q;
 
     unique case (state_q)
       StIoIdle: begin
@@ -119,6 +129,7 @@ module io_controller #(
           state_d    = StIoLoad;
         end else if (unload_en_i) begin
           word_cnt_d = '0;
+          read_cnt_d = '0;
           state_d    = StIoUnload;
         end
       end
@@ -143,6 +154,9 @@ module io_controller #(
             word_cnt_d = word_cnt_q + 7'd1;
           end
         end
+        if (mem_re_o) begin
+          read_cnt_d = read_cnt_q + 7'd1;
+        end
       end
 
       default: state_d = StIoIdle;
@@ -152,18 +166,31 @@ module io_controller #(
   // Sequential logic
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      state_q    <= StIoIdle;
-      word_cnt_q <= '0;
+      state_q             <= StIoIdle;
+      word_cnt_q          <= '0;
+      read_cnt_q          <= '0;
+      mem_re_q            <= 1'b0;
       unload_read_valid_q <= 1'b0;
-      unload_data_q <= '0;
+      unload_data_q       <= '0;
     end else begin
       state_q    <= state_d;
       word_cnt_q <= word_cnt_d;
+      read_cnt_q <= read_cnt_d;
+      mem_re_q   <= mem_re_o;
 
-      // Read pipeline for Unload
+      // Skid update for Unload:
+      //   - Capture mem_rdata_i into unload_data_q only when a read fired in
+      //     the previous cycle (mem_re_q) AND the skid has space (either empty
+      //     or being drained this cycle by a successful output handshake).
+      //   - Otherwise, if the consumer takes the current word, mark the skid
+      //     empty so the next read can fill it.
       if (state_q == StIoUnload) begin
-        unload_read_valid_q <= mem_re_o;
-        unload_data_q <= mem_rdata_i;
+        if (mem_re_q && (!unload_read_valid_q || (valid_o && ready_i))) begin
+          unload_data_q       <= mem_rdata_i;
+          unload_read_valid_q <= 1'b1;
+        end else if (valid_o && ready_i) begin
+          unload_read_valid_q <= 1'b0;
+        end
       end else begin
         unload_read_valid_q <= 1'b0;
       end
@@ -177,11 +204,19 @@ module io_controller #(
   assign mem_we_o    = (state_q == StIoLoad) && valid_i && ready_o;
   assign mem_addr_o  = (state_q == StIoLoad)
                      ? (param_base_addr + {3'b0, word_cnt_q})
-                     : (unload_base_addr + {3'b0, word_cnt_q});
+                     : (unload_base_addr + {3'b0, read_cnt_q});
   assign mem_wdata_o = data_i;
-  assign mem_re_o    = (state_q == StIoUnload) && (!unload_read_valid_q || ready_i);
+  // Issue a read only when:
+  //   - State is Unload and we still have words to fetch
+  //   - The previous cycle did NOT issue a read (avoid double in-flight, since
+  //     the skid is 1-deep and in-flight data would be dropped)
+  //   - Skid is empty or being drained this cycle
+  assign mem_re_o    = (state_q == StIoUnload)
+                    && (read_cnt_q < unload_num_words)
+                    && !mem_re_q
+                    && (!unload_read_valid_q || (valid_o && ready_i));
 
-  // Unload: output data read from memory
+  // Unload: output data read from memory (registered into unload_data_q)
   assign valid_o = (state_q == StIoUnload) && unload_read_valid_q;
   assign data_o  = unload_data_q;
 
