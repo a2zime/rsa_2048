@@ -1,9 +1,9 @@
 # RSA-2048 IP 検証仕様書
 
 **作成日**: 2026年4月18日
-**更新日**: 2026年5月3日
+**更新日**: 2026年5月11日
 **作成者**: a2zime × Claude Code
-**バージョン**: 1.7
+**バージョン**: 1.8
 **前提ドキュメント**:
 - [要求仕様書](requirements.md)
 - [設計仕様書](design_spec.md)
@@ -22,6 +22,7 @@
 | 1.5 | 2026-04-29 | §5.1 MAU-05 期待値の誤植を修正（0xFFFF_FFFE_0000_0000 → 0xFFFF_FFFF_0000_0000）。（Issue #13 対応） |
 | 1.6 | 2026-05-02 | §5.5 MEM-07 を Port A・Port B × addr=0・1023 の 4 ケースに拡充。MEM-09（境界アドレス連続アクセス折り返し）を新規追加。 |
 | 1.7 | 2026-05-03 | §5.2 MM-12 サイクル数上限を実測値ベースに修正。25K → 実測値記録方式へ変更。（Issue #20 対応） |
+| 1.8 | 2026-05-11 | §5.4 IO-08/IO-13/IO-14 の記載を実装・設計仕様と整合させる。IO-08 は unload が addr_i に依らず常に 64 ワードであることを明示。IO-13 は予約値の存在しない 4bit param_addr_e 仕様に合わせ「全 16 値の境界値カバレッジ補完」に再定義。IO-14 は「load_en が unload_en より優先」を明示。（Issue #28 対応） |
 
 ---
 
@@ -308,13 +309,13 @@ MM-13〜MM-16 は波形アサーションで検出。
 | IO-05 | LSB-first 順序 | 機能 | 入力列 w0, w1, ..., w63 | word_cnt=0 のとき LSB（w0）が書かれる | 波形で mem_addr_o の初期値と mem_wdata_o = w0 を確認 |
 | IO-06 | load_done パルス幅 | プロトコル | 最終ワード受信時 | 1 クロック幅のパルス | 波形アサーションで load_done_o のアサート期間がちょうど 1 サイクルであることを確認 |
 | IO-07 | unload 2048bit | 正常系 | unload_en_i, N=64 | data_o が 64 ワード出力、unload_done が最終 | Python生成の期待データ列と DUT data_o を bit-exact比較。unload_done のタイミングを波形確認 |
-| IO-08 | unload 1024bit | 正常系 | unload_en_i, N=32 | 32 ワード出力 | Python参照と DUT data_o を bit-exact比較 |
+| IO-08 | unload は addr_i に依らず 64 ワード固定 | 機能 | addr_i=ParamP, unload_en_i | 64 ワード出力（ADDR_RESULT 領域）、unload_done が 64 ワード目に 1 パルス | Python生成の期待データ列と DUT data_o を bit-exact比較。設計仕様 §4.2 に基づき結果領域は常に 2048bit（unload_num_words=64 固定）であることを確認 |
 | IO-09 | Valid/Ready ハンドシェイク | プロトコル | ready_o=0 中は word_cnt 変化なし | Valid/Ready 成立サイクルのみカウント進行 | 波形アサーションで ready_o=0 期間中 word_cnt が変化しないことを確認 |
 | IO-10 | ready_i バックプレッシャ | プロトコル | unload 中 ready_i=0 期間 | valid_o と data_o が保持され、カウンタ停止 | 波形アサーションで ready_i=0 期間中 valid_o と data_o が保持されることを確認 |
 | IO-11 | 連続パラメータロード | 機能 | param1 → param2 を連続投入 | 各パラメータで load_done が 1 回、領域が干渉しない | 各パラメータのアドレス領域に対して Python参照と mem_addr_o / mem_wdata_o を bit-exact比較 |
 | IO-12 | リセット中の load_en 無視 | 異常系 | rst_n=0 中 load_en_i | mem_we_o が立たない | 波形アサーションで rst_n=0 期間中 mem_we_o=0 を確認（違反時 `$fatal`） |
-| IO-13 | 不正 addr_i（予約値） | 異常系 | ParamBase〜ParamBasQ 以外を投入 | 書き込み抑止 or 仕様通りのデフォルト動作（設計確認） | 波形で mem_we_o が立たないことを確認（または実装に準じた挙動を波形確認） |
-| IO-14 | load_en と unload_en の同時アサートなし | プロトコル | 設計上禁止、アサート違反時の挙動 | StIoIdle が優先される（実装確認） | 波形アサーションで同時アサート時に StIoIdle 優先であることを確認 |
+| IO-13 | param_addr_e 4bit 最大値の単独確認 | 機能 | addr_i=ParamBasQ（4'hF） | 32 ワード正常書込、load_done パルス 1 回 | IO-04 で全 16 値を網羅済み。本ケースは 4bit 最大値での回帰防止確認。`param_addr_e` は ParamBase=4'h0〜ParamBasQ=4'hF の 16 値全てを定義済みで予約値は存在しない |
+| IO-14 | load_en_i と unload_en_i 同時アサート時の優先度 | プロトコル | 両 enable を同時アサート | load_en_i が優先され StIoLoad に遷移（mem_we_o アサート、valid_o は立たない） | RTL の `if (load_en_i) ... else if (unload_en_i)` 順により load が優先。mem_we_o の立ち上がりと valid_o=0 を波形で確認 |
 
 **合否判定:** mem_addr_o / mem_wdata_o / data_o / load_done_o / unload_done_o の波形が
 参照シーケンスと bit-exact 一致。
