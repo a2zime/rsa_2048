@@ -1,9 +1,9 @@
 # RSA-2048 IP 検証結果レポート
 
 **作成日**: 2026年5月2日
-**更新日**: 2026年5月10日
+**更新日**: 2026年5月11日
 **作成者**: a2zime × Claude Code
-**対応仕様書**: [verification_spec.md](verification_spec.md) v1.7
+**対応仕様書**: [verification_spec.md](verification_spec.md) v1.8
 **シミュレータ**: Icarus Verilog (iverilog -g2012)
 **クロック**: 100 MHz (10 ns周期)
 
@@ -18,7 +18,7 @@
 | `mont_mul` | `tb/tb_mont_mul.sv` | MM-01〜16 | 1832 / 1832 | ✅ PASSED |
 | `mod_exp` | `tb/tb_mod_exp.sv` | ME-01〜16 | 1890 / 1890 | ✅ PASSED |
 | `io_controller` | `tb/tb_io_controller.sv` | IO-01〜14 | 1988 / 1988 | ✅ PASSED |
-| `crt_controller` | — | CRT-01〜12 | — | ⏳ 未着手 |
+| `crt_controller` | `tb/tb_crt_controller.sv` | CRT-01〜12 | 1356 / 1356 | ✅ PASSED |
 | `rsa_top` | — | TOP-01〜16 | — | ⏳ 未着手 |
 
 ---
@@ -248,7 +248,74 @@ TEST PASSED  1988 / 1988 checks
 
 ---
 
-## 7. 発見済みバグ・仕様誤植
+## 7. crt_controller 検証結果
+
+**シミュレーション実行コマンド:**
+```
+iverilog -g2012 -o sim_crt.out rtl/rsa_pkg.sv rtl/operand_mem.sv rtl/mul_add_unit.sv \
+    rtl/mont_mul.sv rtl/mod_exp.sv rtl/crt_controller.sv tb/tb_crt_controller.sv
+vvp sim_crt.out          # 通常実行（VCDなし）
+vvp sim_crt.out +vcd     # デバッグ時のみ VCD 生成
+```
+
+**最終出力:**
+```
+TEST PASSED  1356 / 1356 checks
+```
+
+**実行時間:**
+
+| 指標 | 値 |
+|---|---|
+| シミュレーション内時間 | 5.51 ms（約 551M cycles @100MHz、9 runs 合計）|
+| Icarus Verilog 実時間 | 約 51 分 |
+
+**テストベクタ:** `scripts/gen_crt_vectors.py`（seed=0x0C7C_2048）で 6 ケース生成。RSA-2048 鍵（1024bit prime p, q + dp, dq, qinv）と randomized ciphertext c。Python 参照モデル `crt_decrypt()` で期待値（m1, m2, h*q, result）を計算し `.hex` に格納。
+
+**メモリモデル:** 実 RTL の `operand_mem` を TB に組み込み、`rsa_top` 同等の Port A 3-way 調停（TB / mod_exp / crt_controller）＋ DSP 調停 ＋ n_prime セレクタを TB 内で再現。
+
+### CRT-01〜12 詳細
+
+| 検証ID | 検証内容 | 種別 | チェック数 | 結果 | 詳細 |
+|---|---|---|---|---|---|
+| CRT-01 | 基本 CRT 復号（3 ケース） | 正常系 | 585 | ✅ PASS | 3 つの RSA-2048 鍵ペアと randomized 暗号文。各ケースで result(64w) + m1(32w) + m2(32w) + h*q(64w) + CRT-06/07/11 サブ判定を bit-exact 比較 |
+| CRT-02 | CRT 署名（再実行） | 正常系 | 64 | ✅ PASS | CRT-01[0] と同じパラメータで再実行し、result(64w) が Python `pow(c, d, n)` と bit-exact 一致 |
+| CRT-03 | m1 < m2（負補正あり） | 境界値 | 192 | ✅ PASS | Python で m1<m2 となる ciphertext を探索投入。`StCrtSubM` の borrow 補正パス（+p）が動作し、最終 result が一致 |
+| CRT-04 | m1 ≥ m2（負補正なし） | 境界値 | 192 | ✅ PASS | m1≥m2 となる ciphertext を投入。補正不要パスで最終 result が一致 |
+| CRT-05 | h = 0（m1 == m2） | 境界値 | 192 | ✅ PASS | base=1 を投入し m1=m2=1。h=0、最終 result == m2（上位 32 ワードはゼロ拡張）|
+| CRT-06 | ExpP/ExpQ の n_prime 切替 | 機能 | 3 | ✅ PASS | CRT-01 各ケース実行中に `state_q == StCrtExpP/Wait` のとき `use_nq_prime_o=0`、`StCrtExpQ/Wait` のとき `=1` を観測 |
+| CRT-07 | MulQinv の 2 回 MontMul | 機能 | 3 | ✅ PASS | CRT-01 各ケース実行中に `crt_mont_start` のアサート回数を計数 → ちょうど 2 回 |
+| CRT-08 | StCrtMulHQ の mul_add_unit 駆動 | 機能 | 1 | ✅ PASS | CRT-01〜CRT-05 の hq(64w) bit-exact 比較で間接的にカバー |
+| CRT-09 | StCrtAddM2 の 2048bit 加算 | 機能 | 1 | ✅ PASS | CRT-01〜CRT-05 の result(64w) bit-exact 比較で間接的にカバー |
+| CRT-10 | 状態遷移順序 | プロトコル | 65 | ✅ PASS | CRT-01[0] 再実行中に `state_q` の最初の遷移を逐次キャプチャし、設計仕様 §4.6 の遷移順（StCrtReduceP → StCrtExpP → ... → StCrtDone）と一致確認 |
+| CRT-11 | mod_exp 完了待ちの排他性 | プロトコル | 3 | ✅ PASS | CRT-01 各ケース実行中に `StCrtExpPWait / StCrtExpQWait` の間 `crt_mont_start=0` を観測（mod_exp 側の `exp_mont_start` は正常動作のため対象外）|
+| CRT-12 | リセット中断耐性 | 異常系 | 64 | ✅ PASS | CRT-01[0] 開始 10K サイクル後に `rst_n=0` を 5 サイクル印加、解除後に再実行 → 最終 result が Python 参照と bit-exact 一致 |
+
+**チェック数内訳:** CRT-01(585) + CRT-02(64) + CRT-03(192) + CRT-04(192) + CRT-05(192) + CRT-08(1) + CRT-09(1) + CRT-10(65) + CRT-12(64) = **1356**
+
+注：CRT-06/07/11 は CRT-01 の 3 ケースに対するモニタとして同時計上（各 3 件、CRT-01 の 585 のうち 9 件）
+
+### 発見バグ（crt_controller RTL 5件 + TB 自己バグ 1件）
+
+テストベンチ実装中に RTL バグ 5件 を発見・修正（Issue #30）。加えて TB 実装中に自己バグ 1件 を修正。
+
+| Issue | 種別 | 内容 | 症状 |
+|---|---|---|---|
+| [#30](https://github.com/a2zime/rsa_2048/issues/30) #1 | RTL バグ | `StCrtSubM` sub=3→4: `tmp_d = mem_rdata_i` で BRAM 1cyc レイテンシ非対応 | M1[wc] 取得の意図だが、実際は 2 サイクル前に発行された別アドレス（書き込み中の old value）が tmp_q に入る |
+| [#30](https://github.com/a2zime/rsa_2048/issues/30) #2 | RTL バグ | `StCrtSubM` sub=7→8: borrow 補正での同型バグ | h_temp[wc] 取得失敗 |
+| [#30](https://github.com/a2zime/rsa_2048/issues/30) #3 | RTL バグ | `StCrtMulHQ` sub=1→2: h[mul_i] 取得での同型バグ | h[mul_i] 取得失敗 |
+| [#30](https://github.com/a2zime/rsa_2048/issues/30) #4 | RTL バグ | `StCrtAddM2` sub=0→1: hq[wc] 取得での同型バグ | hq[wc] 取得失敗 |
+| [#30](https://github.com/a2zime/rsa_2048/issues/30) #5 | RTL バグ | `StCrtMulHQ` sub=11: `mul_i_q + 5'd1 >= HALF_WORDS[4:0]` の比較 | `HALF_WORDS=32` を int localparam の 5-bit スライスで取ると 0 になり、外側ループが最初の 1 回で終了 |
+| (TB) | TB 自己バグ | `mont_mul.mem_rdata_i` を未接続 logic に接続 | mont_mul の入力が X、すべての計算結果が X となり「シミュレーションは進むが result が全 X」になった |
+
+**修正方針:**
+- バグ 1〜4（BRAM レイテンシ）: 対象 sub_q のナンバリングを 1 つずらして read→NOP→latch の 3-cycle パターンに統一（`StCrtReduceP/Q` の sub=0,1,2 と同じ構造）
+- バグ 5（HALF_WORDS スライス）: `mul_i_q == 5'd31` の等値比較に変更
+- TB 自己バグ: `mont_mul.mem_rdata_i` を `mem_b_rdata`（operand_mem の Port B 出力）に直接接続
+
+---
+
+## 8. 発見済みバグ・仕様誤植
 
 | Issue | 種別 | 内容 | 対応状況 |
 |---|---|---|---|
@@ -263,12 +330,12 @@ TEST PASSED  1988 / 1988 checks
 | [#23](https://github.com/a2zime/rsa_2048/issues/23) | RTL バグ | `rtl/mod_exp.sv` `StExpDone` — 最終ワード書込が `me_busy=0` 遷移で Port A mux に遮断 | sub=3（flush）を追加し書込完了まで `me_busy=1` を保持 |
 | [#24](https://github.com/a2zime/rsa_2048/issues/24) | RTL バグ | `rtl/mod_exp.sv` `StExpInitRWait` — `bit_cnt` 初期値が1小さく MSB スキップ | `bit_cnt = bit_width` に変更（`bit_width-1` から） |
 | [#26](https://github.com/a2zime/rsa_2048/issues/26) | RTL バグ | `rtl/io_controller.sv` unload パイプライン — `unload_data_q` 上書き＆出力カウンタによるアドレス生成で BRAM レイテンシと整合せず最初のワードが3回出力 | 読み出しカウンタ `read_cnt_q` 分離・`mem_re_q` ベースのスキッド更新に変更。throughput は 1 word / 2 cycles |
+| [#30](https://github.com/a2zime/rsa_2048/issues/30) | RTL バグ | `rtl/crt_controller.sv` — `StCrtSubM` / `StCrtMulHQ` / `StCrtAddM2` で BRAM 1cyc レイテンシ非対応の `tmp_d=mem_rdata_i` パターン 4 件＋`HALF_WORDS[4:0]` スライスバグ 1 件、計 5 件 | sub_q ナンバリングを 1 つずらして 3-cycle 待ちパターンに統一＋外側ループ終了判定を `mul_i_q == 5'd31` の等値比較に変更 |
 
 ---
 
-## 8. 未着手モジュールの検証計画
+## 9. 未着手モジュールの検証計画
 
 | モジュール | 検証ID | 概要 | 依存関係 |
 |---|---|---|---|
-| `crt_controller` | CRT-01〜12 | CRT 復号フロー全体 | `mod_exp` + `mont_mul` |
 | `rsa_top` | TOP-01〜16 | 統合テスト（暗号化・復号・署名・検証） | 全モジュール |
