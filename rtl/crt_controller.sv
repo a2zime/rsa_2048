@@ -389,16 +389,20 @@ module crt_controller #(
             sub_d      = 4'd4;
           end
           4'd4: begin
-            tmp_d = mem_rdata_i;  // m1[word_cnt]
-            // Read m2[word_cnt]
-            mem_re_d   = 1'b1;
-            mem_addr_d = ADDR_M2[9:0] + {3'b0, word_cnt_q};
-            sub_d      = 4'd5;
+            // Wait for BRAM rdata to become valid (2-cycle latency)
+            sub_d = 4'd5;
           end
           4'd5: begin
-            sub_d = 4'd6;
+            // Latch m1[word_cnt], then read m2[word_cnt]
+            tmp_d      = mem_rdata_i;
+            mem_re_d   = 1'b1;
+            mem_addr_d = ADDR_M2[9:0] + {3'b0, word_cnt_q};
+            sub_d      = 4'd6;
           end
           4'd6: begin
+            sub_d = 4'd7;
+          end
+          4'd7: begin
             // h_temp[word_cnt] = m1 - m2 - borrow
             {borrow_d, mem_wdata_d} = {1'b0, tmp_q}
                                     - {1'b0, mem_rdata_i}
@@ -412,7 +416,7 @@ module crt_controller #(
                 // m1 < m2: h_temp is negative, correct by adding p
                 word_cnt_d = '0;
                 carry_d    = '0;
-                sub_d      = 4'd7;
+                sub_d      = 4'd8;
               end else begin
                 // m1 >= m2: h_temp is correct
                 word_cnt_d = '0;
@@ -424,23 +428,27 @@ module crt_controller #(
             end
           end
           // Borrow correction: h_temp += p
-          4'd7: begin
+          4'd8: begin
             // Read h_temp[word_cnt]
             mem_re_d   = 1'b1;
             mem_addr_d = ADDR_HQ[9:0] + {3'b0, word_cnt_q};
-            sub_d      = 4'd8;
-          end
-          4'd8: begin
-            tmp_d = mem_rdata_i;
-            // Read p[word_cnt]
-            mem_re_d   = 1'b1;
-            mem_addr_d = ADDR_P[9:0] + {3'b0, word_cnt_q};
             sub_d      = 4'd9;
           end
           4'd9: begin
+            // Wait for BRAM rdata to become valid
             sub_d = 4'd10;
           end
           4'd10: begin
+            // Latch h_temp[word_cnt], then read p[word_cnt]
+            tmp_d      = mem_rdata_i;
+            mem_re_d   = 1'b1;
+            mem_addr_d = ADDR_P[9:0] + {3'b0, word_cnt_q};
+            sub_d      = 4'd11;
+          end
+          4'd11: begin
+            sub_d = 4'd12;
+          end
+          4'd12: begin
             // h_temp[word_cnt] = h_temp[word_cnt] + p[word_cnt] + carry
             {carry_d, mem_wdata_d} = {1'b0, tmp_q}
                                    + {1'b0, mem_rdata_i}
@@ -453,7 +461,7 @@ module crt_controller #(
               sub_d      = '0;
               state_d    = StCrtMulQinv;
             end else begin
-              sub_d = 4'd7;
+              sub_d = 4'd8;
             end
           end
           default: sub_d = 4'd0;
@@ -654,46 +662,50 @@ module crt_controller #(
             sub_d      = 4'd2;
           end
           4'd2: begin
+            // Wait for BRAM rdata to become valid
+            sub_d = 4'd3;
+          end
+          4'd3: begin
             tmp_d      = mem_rdata_i;  // h[mul_i]
             carry_d    = '0;
             word_cnt_d = '0;  // j counter
-            sub_d      = 4'd3;
+            sub_d      = 4'd4;
           end
           // Phase 3: Inner loop — read q[j], read hq[i+j], multiply, write
-          4'd3: begin
+          4'd4: begin
             // Read q[j]
             mem_re_d   = 1'b1;
             mem_addr_d = ADDR_Q[9:0] + {3'b0, word_cnt_q};
-            sub_d      = 4'd4;
-          end
-          4'd4: begin
-            sub_d = 4'd5;
+            sub_d      = 4'd5;
           end
           4'd5: begin
+            sub_d = 4'd6;
+          end
+          4'd6: begin
             // Latch q[j], read hq[i+j]
             tmp2_d     = mem_rdata_i;
             mem_re_d   = 1'b1;
             mem_addr_d = ADDR_HQ[9:0] + {3'b0, 2'b0, mul_i_q} + {3'b0, word_cnt_q};
-            sub_d      = 4'd6;
-          end
-          4'd6: begin
-            sub_d = 4'd7;
+            sub_d      = 4'd7;
           end
           4'd7: begin
+            sub_d = 4'd8;
+          end
+          4'd8: begin
             // Start mul_add_unit: h[i] * q[j] + hq[i+j]
             mul_a_d     = tmp_q;         // h[i]
             mul_b_d     = tmp2_q;        // q[j]
             mul_c_d     = mem_rdata_i;   // hq[i+j]
             mul_start_d = 1'b1;
-            sub_d       = 4'd8;
-          end
-          4'd8: begin
-            // Wait for mul_add_unit done
-            if (mul_done_i) begin
-              sub_d = 4'd9;
-            end
+            sub_d       = 4'd9;
           end
           4'd9: begin
+            // Wait for mul_add_unit done
+            if (mul_done_i) begin
+              sub_d = 4'd10;
+            end
+          end
+          4'd10: begin
             // total = mul_result + carry
             // hq[i+j] = total[31:0], carry = total[64:32]
             {carry_d, mem_wdata_d} = {1'b0, mul_result_i}
@@ -703,18 +715,20 @@ module crt_controller #(
             word_cnt_d = word_cnt_q + 7'd1;
             if (word_cnt_q + 7'd1 >= HALF_WORDS) begin
               // Inner loop done: write carry to hq[i+32]
-              sub_d = 4'd10;
+              sub_d = 4'd11;
             end else begin
-              sub_d = 4'd3;
+              sub_d = 4'd4;
             end
           end
           // Phase 4: Write carry to hq[i + HALF_WORDS]
-          4'd10: begin
+          4'd11: begin
             mem_we_d    = 1'b1;
             mem_addr_d  = ADDR_HQ[9:0] + {3'b0, 2'b0, mul_i_q} + {3'b0, 7'(HALF_WORDS)};
             mem_wdata_d = carry_q[WordWidth-1:0];
             mul_i_d     = mul_i_q + 5'd1;
-            if (mul_i_q + 5'd1 >= HALF_WORDS[4:0]) begin
+            // Compare with HALF_WORDS-1 (=31) since mul_i_q is 5-bit unsigned
+            // and HALF_WORDS[4:0] would slice to 0 due to localparam being int.
+            if (mul_i_q == 5'd31) begin
               // All outer iterations done
               word_cnt_d = '0;
               sub_d      = '0;
@@ -732,27 +746,33 @@ module crt_controller #(
       StCrtAddM2: begin
         unique case (sub_q)
           4'd0: begin
+            // Read hq[word_cnt]
             mem_re_d   = 1'b1;
             mem_addr_d = ADDR_HQ[9:0] + {3'b0, word_cnt_q};
             sub_d      = 4'd1;
           end
           4'd1: begin
-            tmp_d = mem_rdata_i;
-            mem_re_d   = 1'b1;
+            // Wait for BRAM rdata to become valid
+            sub_d = 4'd2;
+          end
+          4'd2: begin
+            // Latch hq[word_cnt], then read m2[word_cnt] (or dummy for upper words)
+            tmp_d    = mem_rdata_i;
+            mem_re_d = 1'b1;
             // m2 is 32 words; zero-extend to 64 words
             if (word_cnt_q < HALF_WORDS) begin
               mem_addr_d = ADDR_M2[9:0] + {3'b0, word_cnt_q};
             end else begin
               // For upper words, m2 is implicitly zero.
-              // Use ADDR_M2[0] as dummy read; result ignored in sub 3.
+              // Use ADDR_M2[0] as dummy read; result ignored in sub 4.
               mem_addr_d = ADDR_M2[9:0];
             end
-            sub_d      = 4'd2;
-          end
-          4'd2: begin
             sub_d = 4'd3;
           end
           4'd3: begin
+            sub_d = 4'd4;
+          end
+          4'd4: begin
             // result[word_cnt] = hq[word_cnt] + m2[word_cnt] + carry
             if (word_cnt_q < HALF_WORDS) begin
               {carry_d, mem_wdata_d} = {1'b0, tmp_q}
