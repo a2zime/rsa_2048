@@ -131,7 +131,16 @@ module rsa_top #(
   // ---------------------------------------------------------------
   // Memory port A arbitration
   // Shared by io_controller / crt_controller / mod_exp
-  // Mutually exclusive control via FSM state
+  //   StLoad / StUnload : io_controller
+  //   StPubExp          : mod_exp
+  //   StCrt             : mod_exp when exp_busy (crt_controller's
+  //                       StCrtExpP/Q delegates to mod_exp), otherwise
+  //                       crt_controller for its own copy/sub/mul/add
+  //                       steps.
+  // The DSP and mont_mul start arbitration use the same exp_busy gate
+  // (see below), so Port A must match — otherwise mod_exp's reads/writes
+  // during StCrtExpP/Q go to addresses driven by crt_controller and
+  // m1/m2 are never stored.
   // ---------------------------------------------------------------
   always_comb begin
     mem_a_we    = 1'b0;
@@ -145,9 +154,15 @@ module rsa_top #(
         mem_a_wdata = io_mem_wdata;
       end
       StCrt: begin
-        mem_a_we    = crt_mem_we;
-        mem_a_addr  = crt_mem_addr;
-        mem_a_wdata = crt_mem_wdata;
+        if (exp_busy) begin
+          mem_a_we    = exp_mem_we;
+          mem_a_addr  = exp_mem_addr;
+          mem_a_wdata = exp_mem_wdata;
+        end else begin
+          mem_a_we    = crt_mem_we;
+          mem_a_addr  = crt_mem_addr;
+          mem_a_wdata = crt_mem_wdata;
+        end
       end
       StPubExp: begin
         mem_a_we    = exp_mem_we;
