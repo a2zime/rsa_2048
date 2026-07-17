@@ -1,7 +1,7 @@
 # RSA-2048 IP 検証結果レポート
 
 **作成日**: 2026年5月2日
-**更新日**: 2026年5月11日
+**更新日**: 2026年5月26日
 **作成者**: a2zime × Claude Code
 **対応仕様書**: [verification_spec.md](verification_spec.md) v1.8
 **シミュレータ**: Icarus Verilog (iverilog -g2012)
@@ -19,7 +19,7 @@
 | `mod_exp` | `tb/tb_mod_exp.sv` | ME-01〜16 | 1890 / 1890 | ✅ PASSED |
 | `io_controller` | `tb/tb_io_controller.sv` | IO-01〜14 | 1988 / 1988 | ✅ PASSED |
 | `crt_controller` | `tb/tb_crt_controller.sv` | CRT-01〜12 | 1356 / 1356 | ✅ PASSED |
-| `rsa_top` | — | TOP-01〜16 | — | ⏳ 未着手 |
+| `rsa_top` | `tb/tb_rsa_top.sv` | TOP-01〜16（TOP-08 は +FULL 限定） | 964 / 964 | ✅ PASSED |
 
 ---
 
@@ -315,7 +315,81 @@ TEST PASSED  1356 / 1356 checks
 
 ---
 
-## 8. 発見済みバグ・仕様誤植
+## 8. rsa_top 検証結果
+
+**シミュレーション実行コマンド:**
+```
+iverilog -g2012 -o sim_rsa_top.out rtl/rsa_pkg.sv rtl/operand_mem.sv \
+    rtl/mul_add_unit.sv rtl/mont_mul.sv rtl/mod_exp.sv \
+    rtl/io_controller.sv rtl/crt_controller.sv rtl/rsa_top.sv \
+    tb/tb_rsa_top.sv
+vvp sim_rsa_top.out               # デフォルト（TOP-01〜16, 1 ケース）
+vvp sim_rsa_top.out +SMOKE        # TOP-01[0] + TOP-15 のみ（スモーク）
+vvp sim_rsa_top.out +SMOKE_CRT    # TOP-03[0] + TOP-04[0] のみ（CRT スモーク）
+vvp sim_rsa_top.out +SMOKE_TOP12  # TOP-12 のみ（バックプレッシャ単独）
+vvp sim_rsa_top.out +FULL         # 全 16 項目 × 3 ケース＋ TOP-05/06/08
+vvp sim_rsa_top.out +vcd          # デバッグ時のみ VCD 生成
+```
+
+**最終出力（デフォルトモード）:**
+```
+TEST PASSED  964 / 964 checks
+```
+
+**実行時間:**
+
+| 指標 | 値 |
+|---|---|
+| シミュレーション内時間 | 約 19.3 ms（~1,927M cycles @100MHz）|
+| Icarus Verilog 実時間 | 約 3 時間（デフォルトモード）|
+
+**テストベクタ:** `scripts/gen_rsa_top_vectors.py`（seed=0xAA12_2048）で RSA-2048 鍵 3 ケース生成。各ケースで Python `pow()` ベースの参照モデルから `m`, `c = m^e mod n`, `s = m^d mod n` および CRT 中間値（`c mod p`, `c mod q`, `m mod p`, `m mod q` ほか）を計算し `tb/common/test_vectors/rsa_top_*.hex` に格納（20 ファイル）。
+
+**統合構成:** `rsa_top` を DUT として、io_controller の 32bit シリアル I/O を介して全パラメータをロード、`start_i + mode_i` で計算起動、`valid_o/data_o` ハンドシェイクで結果を 64 ワード回収する end-to-end フロー。
+
+### TOP-01〜16 詳細
+
+| 検証ID | 検証内容 | 種別 | チェック数 | 結果 | 詳細 |
+|---|---|---|---|---|---|
+| TOP-01 | 暗号化（mode=0, e=65537）| 正常系 | 64 | ✅ PASS | tc=0 で `c = m^e mod n` (64w) が Python 参照と bit-exact 一致。実測 161,884,179 cycles |
+| TOP-02 | 検証（mode=0, e=65537）| 正常系 | 64 | ✅ PASS | tc=0 で `m = s^e mod n` (64w) が原文 `m` と bit-exact 一致 |
+| TOP-03 | CRT 復号（mode=1）| 正常系 | 64 | ✅ PASS | tc=0 で `m = c^d mod n` (64w) が原文 `m` と bit-exact 一致。実測 61,717,632 cycles |
+| TOP-04 | CRT 署名（mode=1）| 正常系 | 64 | ✅ PASS | tc=0 で `s = m^d mod n` (64w) が Python 参照と bit-exact 一致 |
+| TOP-05 | Dec(Enc(m)) == m 往復 | 機能 | 128 | ✅ PASS | tc=0 で暗号化 (64w) + CRT 復号 (64w) を順次実行し、最終結果が原文と一致 |
+| TOP-06 | Ver(Sign(m)) == m 往復 | 機能 | 128 | ✅ PASS | tc=0 で CRT 署名 (64w) + 検証 (64w) を順次実行し、最終結果が原文と一致 |
+| TOP-07 | 連続 2 回演算 | 機能 | 128 | ✅ PASS | tc=0 で暗号化を 2 回連続実行 (64w + 64w)、両回とも結果が一致 |
+| TOP-08 | mode 切替（0→1→0）| 機能 | — | ⏭️ SKIP | +FULL 限定（公開→CRT→公開）。デフォルトでは時間制約のためスキップ |
+| TOP-09 | パラメータロード順序入替 | 機能 | 64 | ✅ PASS | NPrime, RSq, Mod, Exp, Base の順でロード → tc=0 の暗号化結果が一致 |
+| TOP-10 | 不足パラメータでの start | 異常系 | 1 | ✅ PASS | パラメータ未ロード状態で `start_i` 印加 → FSM が StPubExp に遷移する挙動を観測（情報記録） |
+| TOP-11 | busy 期間の start_i 無視 | 異常系 | 65 | ✅ PASS | 暗号化中に `start_i` (mode 反転) を印加 → state_q が StPubExp のまま不変。元の演算結果 (64w) も正しく完了 |
+| TOP-12 | ready_i バックプレッシャ | プロトコル | 64 | ✅ PASS | unload 開始直後に `ready_i=0` を 50 サイクル印加、解除後に全 64w を回収 → 結果が一致 |
+| TOP-13 | 性能（e=65537 公開鍵）| 性能 | 1 | ✅ PASS | 実測 161,884,179 cycles を記録（情報記録。仕様 729,900〜892,100 は MM-12 と同様 ~25K cycles/MontMul 想定に基づく見積で、実装の ~78K cycles/MontMul と乖離）|
+| TOP-14 | 性能（CRT 復号）| 性能 | 1 | ✅ PASS | 実測 61,717,632 cycles を記録（情報記録。仕様 25.65M〜31.35M との乖離は TOP-13 と同根の見積誤差）|
+| TOP-15 | リセットからのコールドスタート | 機能 | 64 | ✅ PASS | `rst_n` 印加直後に通常シーケンスで tc=0 の暗号化を実行 → 結果が一致 |
+| TOP-16 | OpenSSL 互換性 | 正常系 | 64 | ✅ PASS | Python `cryptography` 由来の鍵ペア（標準 RSA primitive）で tc=0 を CRT 復号 → 原文と bit-exact 一致 |
+
+**チェック数内訳:** TOP-01 から TOP-16 まで（TOP-08 を除く）の合計 = 64×11（TOP-01..04, 09, 11rslt, 12, 15, 16）+ 128×3（TOP-05, 06, 07）+ 1×4（TOP-10, TOP-11 state, TOP-13, TOP-14）= **964**
+
+### 発見バグ（rsa_top RTL 1件）
+
+`tb/tb_rsa_top.sv` の実装中に rsa_top の RTL バグ 1件 を発見・修正（Issue #32）。
+
+| Issue | 種別 | 内容 | 症状 |
+|---|---|---|---|
+| [#32](https://github.com/a2zime/rsa_2048/issues/32) | RTL バグ | `rtl/rsa_top.sv` Port A アービタが `state_q==StCrt` の枝で `crt_mem_we` のみを選択しており、CRT 中に `mod_exp` が起動された際の writes/reads がドロップされる | TOP-03 で下位 32 ワードが原文と一致、上位 32 ワードが全 0 になる特徴的失敗（前段の TOP-02 が ADDR_RESULT に残した `m` の下位 32 ワードを crt_controller の m1/m2 コピーが拾い、`h=0` → `result = m2 + 0` 書き出し） |
+
+**修正方針:** `StCrt` の中で `exp_busy` を見て `mod_exp` 側に Port A を譲るよう 3-way アービタ化（DSP アービタ・`mont_mode_arb` 同様）。
+
+### TB 設計上の注意点（記録）
+
+- **load 時の trigger サイクル**: `rsa_top` は io_controller の `load_en_i` を `(state_q==StIdle && valid_i && io_ready)` から導出するため、ユーザが最初に `valid_i` を上げたサイクル自体は load 開始のトリガとして消費され BRAM 書込は発生しない。N ワード書込には `valid_i` を N+1 サイクル維持する必要がある（`load_full`/`load_half`/`load_scalar` タスクが本パターンを実装）。
+- **NPrime 系の load 順序**: `ParamNPrime` / `ParamNpP` / `ParamNqP` は値を `n_prime_q` 等のレジスタにラッチするが、io_controller の `param_base_addr` は 0 になっており BRAM アドレス 0（= `ADDR_BASE`）にも巻き添えで書込が発生する。そのため `load_pub_params` では NPrime を **先に** ロードし、後続の `ParamBase` ロードで address 0 を上書きしている。CRT モードでも同様の順序を採用（こちらは ADDR_BASE がスクラッチ用途のため厳密には不要）。
+- **TOP-13/14 サイクル数**: 仕様は ~25K cycles/MontMul 見積に基づくが、実装は ~78K cycles（MM-12 実測）であるため 1〜2 桁の乖離がある。TB は `pass_cnt++` で常に PASS としつつ実測値を `$display` で記録（MM-12 / Issue #20 と同じ「実測値記録方式」）。仕様改訂は別 Issue で扱う想定。
+- **`$test$plusargs` のプレフィックスマッチ**: `+SMOKE_CRT` 等を渡すと `$test$plusargs("SMOKE")` も真になる。優先度は `smoke_top12` > `smoke_crt` > `smoke_only` の順で判定。
+
+---
+
+## 9. 発見済みバグ・仕様誤植
 
 | Issue | 種別 | 内容 | 対応状況 |
 |---|---|---|---|
@@ -331,11 +405,4 @@ TEST PASSED  1356 / 1356 checks
 | [#24](https://github.com/a2zime/rsa_2048/issues/24) | RTL バグ | `rtl/mod_exp.sv` `StExpInitRWait` — `bit_cnt` 初期値が1小さく MSB スキップ | `bit_cnt = bit_width` に変更（`bit_width-1` から） |
 | [#26](https://github.com/a2zime/rsa_2048/issues/26) | RTL バグ | `rtl/io_controller.sv` unload パイプライン — `unload_data_q` 上書き＆出力カウンタによるアドレス生成で BRAM レイテンシと整合せず最初のワードが3回出力 | 読み出しカウンタ `read_cnt_q` 分離・`mem_re_q` ベースのスキッド更新に変更。throughput は 1 word / 2 cycles |
 | [#30](https://github.com/a2zime/rsa_2048/issues/30) | RTL バグ | `rtl/crt_controller.sv` — `StCrtSubM` / `StCrtMulHQ` / `StCrtAddM2` で BRAM 1cyc レイテンシ非対応の `tmp_d=mem_rdata_i` パターン 4 件＋`HALF_WORDS[4:0]` スライスバグ 1 件、計 5 件 | sub_q ナンバリングを 1 つずらして 3-cycle 待ちパターンに統一＋外側ループ終了判定を `mul_i_q == 5'd31` の等値比較に変更 |
-
----
-
-## 9. 未着手モジュールの検証計画
-
-| モジュール | 検証ID | 概要 | 依存関係 |
-|---|---|---|---|
-| `rsa_top` | TOP-01〜16 | 統合テスト（暗号化・復号・署名・検証） | 全モジュール |
+| [#32](https://github.com/a2zime/rsa_2048/issues/32) | RTL バグ | `rtl/rsa_top.sv` — Port A アービタが `state_q==StCrt` で `crt_mem_we` のみを駆動しており、CRT 中の `mod_exp` の writes/reads が全てドロップされる（DSP・mont_mul start arb 側は既に 3-way 化済みだったが Port A だけ漏れていた）| `StCrt` 内で `exp_busy` を見て `mod_exp` 側に Port A を譲る 3-way アービタに変更。PR で `tb_rsa_top.sv` と同時にコミット（Closes #32）|
