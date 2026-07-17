@@ -1,10 +1,13 @@
-# Private local rules (template is tracked, edits are not)
-# Run after first clone: git update-index --assume-unchanged private/private.md
+# Private local files (not tracked)
+private/
 
 # Simulation outputs
 *.vcd
 *.out
 *.log
+obj_dir/
+coverage.dat
+coverage_annotated/
 
 # OS
 .DS_Store
