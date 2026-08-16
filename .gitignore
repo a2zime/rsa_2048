@@ -11,3 +11,7 @@ coverage_annotated/
 
 # OS
 .DS_Store
+
+# Python バイトコード（成果物ではない）
+__pycache__/
+*.py[cod]
